@@ -1,9 +1,17 @@
 import { readFileSync } from "fs";
 import { ethers } from "ethers";
 
-const abi = JSON.parse(
-  readFileSync(new URL("./abi/FreelanceEscrow.json", import.meta.url), "utf-8")
+// Load the full Hardhat artifact so events (e.g., ProjectCreated) are available for parsing.
+const artifact = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../blockchain/artifacts/contracts/FreelanceEscrow.sol/FreelanceEscrow.json",
+      import.meta.url
+    ),
+    "utf-8"
+  )
 );
+const abi = artifact.abi ?? artifact;
 
 export const getContract = () => {
   const rpc = process.env.SEPOLIA_RPC_URL;

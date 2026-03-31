@@ -5,8 +5,8 @@ const withContract = async (action) => {
   return action(contract);
 };
 
-export const createProjectOnChain = async ({ title, description, budget }) =>
-  withContract((contract) => contract.createProject(title, description, budget));
+export const createProjectOnChain = async ({ title, description, budgetWei }) =>
+  withContract((contract) => contract.createProject(title, description, budgetWei));
 
 export const fundProjectOnChain = async ({ projectId, amountWei }) =>
   withContract((contract) => contract.fundProject(projectId, { value: amountWei }));

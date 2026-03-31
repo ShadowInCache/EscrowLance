@@ -9,6 +9,7 @@ import {
   cancelProjectOnChain,
   refundClientOnChain,
 } from "../services/blockchainService.js";
+import { getContract } from "../blockchain/contractClient.js";
 
 export const createProject = async (req, res) => {
   const { title, description, budget, deadline, freelancerId, milestones = [] } = req.body;
@@ -54,8 +55,18 @@ export const createProject = async (req, res) => {
   await project.save();
 
   try {
-    console.log(`Creating project on-chain: ${title}, budget: ${budget}`);
-    const tx = await createProjectOnChain({ title, description, budget });
+    const budgetWei = ethers.parseEther(String(numericBudget));
+    const contract = getContract();
+
+    // Fail fast if the configured contract address has no code (likely wrong address or not deployed).
+    const code = await contract.runner.provider.getCode(contract.target);
+    if (code === "0x") {
+      console.error("Configured CHAINESCROW_CONTRACT_ADDRESS has no contract code. Check deployment address.");
+      throw new Error("Escrow contract not deployed at configured address");
+    }
+
+    console.log(`Creating project on-chain: ${title}, budget: ${numericBudget} ETH (${budgetWei} wei)`);
+    const tx = await contract.createProject(title, description, budgetWei);
     console.log(`Tx sent: ${tx.hash}`);
     const receipt = await tx.wait();
     console.log(`Receipt received:`, receipt?.hash);
@@ -65,24 +76,38 @@ export const createProject = async (req, res) => {
       return res.status(201).json({ project, milestones: createdMilestones, warning: "Project created but on-chain ID not confirmed. Please try again." });
     }
 
-    // Try multiple strategies to get projectId from event
+    // Parse events with contract interface to extract projectId
     let projectId = null;
-    
-    // Strategy 1: Direct args access (newer ethers)
-    if (receipt.logs?.[0]?.args?.projectId !== undefined) {
-      projectId = receipt.logs[0].args.projectId;
-      console.log("Got projectId from args:", projectId);
+    if (receipt.logs && receipt.logs.length) {
+      for (const log of receipt.logs) {
+        try {
+          const parsed = contract.interface.parseLog(log);
+          if (parsed?.name === "ProjectCreated" && parsed.args?.projectId !== undefined) {
+            projectId = parsed.args.projectId;
+            console.log("Got projectId from event:", projectId.toString());
+            break;
+          }
+        } catch (err) {
+          // ignore non-matching logs
+        }
+      }
     }
-    // Strategy 2: Log data parsing (fallback)
-    else if (receipt.logs && receipt.logs.length > 0) {
-      console.log("First log:", JSON.stringify(receipt.logs[0], null, 2));
-      projectId = receipt.logs[0].topics?.[1] ? BigInt(receipt.logs[0].topics[1]) : null;
-      console.log("Got projectId from topics:", projectId);
+    if (!projectId) {
+      console.log("Receipt logs (debug):", receipt.logs);
     }
 
     if (projectId === null) {
-      console.warn("Could not extract projectId from receipt. Defaulting to 0.");
-      projectId = 0;
+      try {
+        const count = await contract.projectCount();
+        projectId = count;
+        console.warn(
+          "Could not extract projectId from receipt. Falling back to projectCount():",
+          projectId.toString()
+        );
+      } catch (fallbackErr) {
+        console.warn("Could not extract projectId; fallback failed:", fallbackErr.message);
+        projectId = 0;
+      }
     }
 
     project.contractProjectId = Number(projectId);

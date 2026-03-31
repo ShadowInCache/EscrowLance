@@ -9,6 +9,7 @@ import transactionRoutes from "./routes/transactionRoutes.js";
 import disputeRoutes from "./routes/disputeRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
+import { getContract } from "./blockchain/contractClient.js";
 import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 
 dotenv.config();
@@ -22,6 +23,39 @@ app.use(morgan("dev"));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: Date.now() });
+});
+
+app.get("/health/blockchain", async (_req, res) => {
+  try {
+    const contract = getContract();
+    const provider = contract.runner.provider;
+
+    const [network, code] = await Promise.all([provider.getNetwork(), provider.getCode(contract.target)]);
+    const hasCode = code && code !== "0x";
+    let projectCount = null;
+    let projectCountError = null;
+
+    if (hasCode) {
+      try {
+        projectCount = (await contract.projectCount()).toString();
+      } catch (err) {
+        projectCountError = err.message;
+      }
+    }
+
+    res.json({
+      status: "ok",
+      address: contract.target,
+      hasCode,
+      codeSizeBytes: code ? (code.length - 2) / 2 : 0,
+      network: { chainId: network.chainId?.toString(), name: network.name },
+      projectCount,
+      projectCountError,
+      timestamp: Date.now(),
+    });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message, timestamp: Date.now() });
+  }
 });
 
 app.use("/api/auth", authRoutes);
