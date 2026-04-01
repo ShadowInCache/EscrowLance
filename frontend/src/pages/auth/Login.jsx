@@ -32,7 +32,7 @@ const Login = () => {
       <div className="relative z-10 w-full max-w-6xl grid grid-cols-1 md:grid-cols-2 gap-8 items-center fade-in-up">
         <div className="glass-panel p-10 rounded-2xl shadow-2xl border border-white/5">
           <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-primary bg-primary/10 px-3 py-1 rounded-full mb-4">Secure by design</div>
-          <h1 className="text-3xl md:text-4xl font-semibold leading-tight mb-3">Welcome back to ChainEscrow</h1>
+          <h1 className="text-3xl md:text-4xl font-semibold leading-tight mb-3">Welcome back to EscrowLancer</h1>
           <p className="text-slate-400 text-sm md:text-base mb-6">Sign in to manage projects, milestones, and on-chain releases with confidence.</p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <label className="block">

@@ -71,39 +71,87 @@ const Wallet = () => {
     </span>
   );
 
+  const connectionState = () => {
+    if (showConnected) {
+      return {
+        title: "Connected and aligned",
+        description: "On Sepolia and wallet matches your profile. You are ready to sign and fund.",
+        tone: "ok",
+      };
+    }
+    if (onWrongNetwork) {
+      return {
+        title: "Wrong network",
+        description: "Switch MetaMask to Sepolia so transactions go to the testnet.",
+        tone: "warn",
+      };
+    }
+    if (!isConnected) {
+      return {
+        title: "Not connected",
+        description: "Connect MetaMask to select an account and proceed.",
+        tone: "warn",
+      };
+    }
+    return {
+      title: "Account mismatch",
+      description: "Pick the MetaMask account that matches your profile wallet.",
+      tone: "warn",
+    };
+  };
+
+  const { title: stateTitle, description: stateDescription, tone: stateTone } = connectionState();
+
   return (
     <div className="space-y-6">
       <div className="rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-slate-800 border border-slate-800 p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-2">
             <p className="text-sm uppercase tracking-wide text-slate-400">Wallet Center</p>
-            <h2 className="mt-1 text-2xl font-semibold text-white">Connect, align, and stay on-chain</h2>
-            <p className="mt-2 text-sm text-slate-300">
+            <h2 className="text-2xl font-semibold text-white">Connect, align, and stay on-chain</h2>
+            <p className="text-sm text-slate-300">
               Ensure MetaMask is connected, on Sepolia, and matches your profile wallet before starting a demo.
             </p>
-            {status && <p className="mt-3 text-xs text-amber-300">{status}</p>}
-            {walletError && <p className="mt-1 text-xs text-amber-300">{walletError}</p>}
+            {status && <p className="text-xs text-amber-300">{status}</p>}
+            {walletError && <p className="text-xs text-amber-300">{walletError}</p>}
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <button
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
-                showConnected
-                  ? "bg-slate-800 text-slate-300 cursor-default"
-                  : "bg-primary text-slate-950 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/30 active:translate-y-0"
-              }`}
-              onClick={showConnected ? undefined : primaryAction}
-              disabled={showConnected || isSwitching}
-            >
-              {primaryLabel()}
-            </button>
-            {showConnected && (
+
+          <div
+            className={`w-full md:w-80 rounded-xl border p-4 shadow-sm ${
+              stateTone === "ok"
+                ? "border-emerald-500/60 bg-emerald-500/5 shadow-emerald-500/10"
+                : "border-amber-400/50 bg-amber-400/5 shadow-amber-400/10"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-400">Connection status</p>
+                <p className="text-lg font-semibold text-white">{stateTitle}</p>
+              </div>
+              {statusPill(showConnected, "Ready", "Action needed")}
+            </div>
+            <p className="mt-2 text-sm text-slate-200">{stateDescription}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
-                className="text-xs text-slate-300 underline underline-offset-4 hover:text-white"
-                onClick={disconnect}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                  showConnected
+                    ? "bg-emerald-400 text-slate-950"
+                    : "bg-primary text-slate-950 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/30 active:translate-y-0"
+                }`}
+                onClick={showConnected ? undefined : primaryAction}
+                disabled={showConnected || isSwitching}
               >
-                Disconnect
+                {primaryLabel()}
               </button>
-            )}
+              {isConnected && (
+                <button
+                  className="px-3 py-2 rounded-lg text-xs font-semibold border border-slate-700 text-slate-200 hover:border-slate-500"
+                  onClick={disconnect}
+                >
+                  Disconnect
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

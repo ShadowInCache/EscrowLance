@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext.jsx";
 import { fetchProjects } from "../../services/api.js";
 
 const statusTone = {
@@ -14,6 +15,9 @@ const statusTone = {
 
 const Projects = () => {
   const [projects, setProjects] = useState([]);
+  const { user } = useAuth();
+  const role = user?.role?.toLowerCase?.();
+  const isClient = role === "client";
 
   useEffect(() => {
     fetchProjects().then(setProjects).catch(console.error);
@@ -59,12 +63,14 @@ const Projects = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Link
-              to="/projects/new"
-              className="px-4 py-2 rounded-lg bg-primary text-white font-medium hover:opacity-90 transition"
-            >
-              Create project
-            </Link>
+            {isClient && (
+              <Link
+                to="/projects/new"
+                className="px-4 py-2 rounded-lg bg-primary text-white font-medium hover:opacity-90 transition"
+              >
+                Create project
+              </Link>
+            )}
             <Link
               to="/dashboard"
               className="px-4 py-2 rounded-lg border border-slate-700 text-slate-100 hover:border-primary/80 transition"
@@ -104,7 +110,9 @@ const Projects = () => {
         {projects.length === 0 ? (
           <div className="flex flex-col items-start gap-3 border border-dashed border-slate-700 rounded-lg p-6 bg-slate-900/40">
             <p className="text-slate-300">
-              No projects yet. Use the Create project action above to spin up your first brief and milestones.
+              {isClient
+                ? "No projects yet. Use the Create project action above to spin up your first brief and milestones."
+                : "No projects yet. Projects assigned to you will appear here once a client adds you."}
             </p>
           </div>
         ) : (
