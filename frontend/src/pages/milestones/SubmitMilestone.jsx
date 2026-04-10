@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { submitMilestone, fetchProjects, listMilestones, uploadProofFile } from "../../services/api.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
@@ -16,6 +17,11 @@ const SubmitMilestone = () => {
   const { addToast } = useToast();
 
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
+
+  const onChainProjects = projects.filter(
+    (p) => p.contractProjectId !== undefined && p.contractProjectId !== null
+  );
+  const offChainProjectsCount = Math.max(projects.length - onChainProjects.length, 0);
 
   const selectedMilestone = milestones.find((m) => m._id === form.milestoneId);
   const selectedStatus = selectedMilestone?.status || "Pending";
@@ -96,10 +102,18 @@ const SubmitMilestone = () => {
               Pick your project, attach proof, and send the milestone for approval. We will only allow pending milestones to be submitted.
             </p>
             <div className="flex flex-wrap gap-2 text-xs">
-              <span className="rounded-full border border-slate-700 px-3 py-1 bg-slate-950/60">Projects loaded: {projects.length}</span>
+              <span className="rounded-full border border-slate-700 px-3 py-1 bg-slate-950/60">Projects loaded: {onChainProjects.length}</span>
               <span className="rounded-full border border-slate-700 px-3 py-1 bg-slate-950/60">Milestones: {milestones.length || "-"}</span>
               <span className="rounded-full border border-slate-700 px-3 py-1 bg-slate-950/60">Status: {selectedStatus}</span>
             </div>
+            {offChainProjectsCount > 0 && (
+              <div className="text-xs text-amber-300 flex items-center gap-2 flex-wrap">
+                <span>{offChainProjectsCount} project(s) are not deployed on-chain yet and cannot be submitted.</span>
+                <Link className="underline text-amber-200 hover:text-amber-100" to="/projects">
+                  Open Projects to deploy them.
+                </Link>
+              </div>
+            )}
           </div>
           {selectedMilestone && (
             <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 w-full max-w-xs">
@@ -148,7 +162,7 @@ const SubmitMilestone = () => {
                 onChange={(e) => setForm({ ...form, projectId: e.target.value, milestoneId: "" })}
               >
                 <option value="">Select project</option>
-                {projects.map((p) => (
+                {onChainProjects.map((p) => (
                   <option key={p._id} value={p._id}>
                     {p.title} ({p.status})
                   </option>

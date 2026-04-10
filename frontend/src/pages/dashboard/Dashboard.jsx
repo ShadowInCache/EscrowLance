@@ -3,10 +3,13 @@ import { Link } from "react-router-dom";
 import StatCard from "../../components/StatCard.jsx";
 import { fetchProjects, listTransactions } from "../../services/api.js";
 import MilestoneCard from "../../components/MilestoneCard.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 const Dashboard = () => {
   const [projects, setProjects] = useState([]);
   const [transactions, setTransactions] = useState([]);
+  const { user } = useAuth();
+  const canCreateProject = user?.role === "client" || user?.role === "admin";
 
   useEffect(() => {
     fetchProjects().then(setProjects).catch(console.error);
@@ -55,12 +58,14 @@ const Dashboard = () => {
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
-              <Link
-                to="/projects/new"
-                className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-primary/30 hover:-translate-y-0.5 hover:shadow-primary/50 transition"
-              >
-                Create project
-              </Link>
+              {canCreateProject && (
+                <Link
+                  to="/projects/new"
+                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-primary/30 hover:-translate-y-0.5 hover:shadow-primary/50 transition"
+                >
+                  Create project
+                </Link>
+              )}
               <Link
                 to="/transactions"
                 className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-100 hover:border-primary hover:text-primary transition"

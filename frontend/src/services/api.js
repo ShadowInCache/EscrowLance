@@ -26,6 +26,7 @@ export const getProfile = async () => {
 export const fetchProjects = async () => (await api.get("/projects")).data;
 export const fetchProject = async (id) => (await api.get(`/projects/${id}`)).data;
 export const createProject = async (payload) => (await api.post("/projects/create", payload)).data;
+export const deployProject = async (projectId) => (await api.post(`/projects/${projectId}/deploy`)).data;
 export const deleteProject = async (projectId) => (await api.delete(`/projects/${projectId}`)).data;
 export const assignFreelancerApi = async (projectId, payload) => (await api.post(`/projects/${projectId}/assign`, payload)).data;
 export const submitMilestone = async (payload) => (await api.post("/milestones/submit", payload)).data;

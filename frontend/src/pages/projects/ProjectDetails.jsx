@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { fetchProject, listMilestones, listProjectTransactions, listFreelancers, assignFreelancerApi, deleteProject } from "../../services/api.js";
+import { fetchProject, listMilestones, listProjectTransactions, listFreelancers, assignFreelancerApi, deleteProject, deployProject } from "../../services/api.js";
 import MilestoneCard from "../../components/MilestoneCard.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
@@ -15,6 +15,7 @@ const ProjectDetails = () => {
   const [assignSel, setAssignSel] = useState("");
   const [assignLoading, setAssignLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deployLoading, setDeployLoading] = useState(false);
   const [error, setError] = useState("");
   const { user } = useAuth();
   const { addToast } = useToast();
@@ -77,6 +78,23 @@ const ProjectDetails = () => {
     }
   };
 
+  const onDeploy = async () => {
+    setDeployLoading(true);
+    setError("");
+    try {
+      const updated = await deployProject(id);
+      setProject(updated);
+      addToast("Project deployed on-chain", "success");
+    } catch (err) {
+      console.error(err);
+      const msg = err?.response?.data?.message || err.message || "Deployment failed";
+      setError(msg);
+      addToast(msg, "error");
+    } finally {
+      setDeployLoading(false);
+    }
+  };
+
   if (!project) return <p>Loading...</p>;
 
   return (
@@ -88,6 +106,9 @@ const ProjectDetails = () => {
             <p className="text-slate-400">{project.description}</p>
           </div>
           <div className="flex items-center gap-2">
+            <span className={`text-sm px-2 py-1 rounded ${project.contractProjectId ? "bg-emerald-900/50 text-emerald-200" : "bg-amber-900/50 text-amber-100"}`}>
+              {project.contractProjectId ? `On-chain #${project.contractProjectId}` : "Not deployed"}
+            </span>
             <span className="text-sm px-2 py-1 bg-slate-800 rounded">{project.status}</span>
             {(user?.role === "client" || user?.role === "admin") && ["Created", "Cancelled"].includes(project.status) && (
               <button
@@ -101,6 +122,21 @@ const ProjectDetails = () => {
           </div>
         </div>
         <div className="text-sm text-slate-400 mt-2">Budget: {project.budget} ETH</div>
+        {!project.contractProjectId && (user?.role === "client" || user?.role === "admin") && (
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded border border-amber-700/50 bg-amber-950/30 px-4 py-3">
+            <div className="text-sm text-amber-100">
+              This project exists in the database but has not been deployed on-chain yet.
+            </div>
+            <button
+              type="button"
+              onClick={onDeploy}
+              disabled={deployLoading}
+              className="rounded bg-primary px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60"
+            >
+              {deployLoading ? "Deploying..." : "Deploy on-chain"}
+            </button>
+          </div>
+        )}
         {project.freelancerId ? (
           <div className="text-sm text-slate-300 mt-1">Freelancer assigned</div>
         ) : (

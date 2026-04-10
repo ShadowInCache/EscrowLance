@@ -11,6 +11,74 @@ import {
 } from "../services/blockchainService.js";
 import { getContract } from "../blockchain/contractClient.js";
 
+const deployProjectOnChain = async (project, userId) => {
+  const budgetWei = ethers.parseEther(String(project.budget));
+  const contract = getContract();
+
+  const code = await contract.runner.provider.getCode(contract.target);
+  if (code === "0x") {
+    console.error("Configured CHAINESCROW_CONTRACT_ADDRESS has no contract code. Check deployment address.");
+    throw new Error("Escrow contract not deployed at configured address");
+  }
+
+  console.log(`Creating project on-chain: ${project.title}, budget: ${project.budget} ETH (${budgetWei} wei)`);
+  const tx = await contract.createProject(project.title, project.description, budgetWei);
+  console.log(`Tx sent: ${tx.hash}`);
+  const receipt = await tx.wait();
+  console.log(`Receipt received:`, receipt?.hash);
+
+  if (!receipt) {
+    throw new Error("Project created but on-chain ID not confirmed. Please try again.");
+  }
+
+  let projectId = null;
+  if (receipt.logs && receipt.logs.length) {
+    for (const log of receipt.logs) {
+      try {
+        const parsed = contract.interface.parseLog(log);
+        if (parsed?.name === "ProjectCreated" && parsed.args?.projectId !== undefined) {
+          projectId = parsed.args.projectId;
+          console.log("Got projectId from event:", projectId.toString());
+          break;
+        }
+      } catch (err) {
+        // ignore non-matching logs
+      }
+    }
+  }
+
+  if (projectId === null) {
+    try {
+      const count = await contract.projectCount();
+      if (count && Number(count) > 0) {
+        projectId = count;
+        console.warn("Could not extract projectId from receipt. Falling back to projectCount():", projectId.toString());
+      }
+    } catch (fallbackErr) {
+      console.warn("Could not extract projectId; fallback failed:", fallbackErr.message);
+    }
+  }
+
+  if (projectId === null) {
+    throw new Error("Could not determine on-chain projectId from tx receipt or projectCount");
+  }
+
+  project.contractProjectId = Number(projectId);
+  project.createTxHash = receipt.hash;
+  await project.save();
+  console.log(`Project saved with contractProjectId: ${project.contractProjectId}`);
+
+  await Transaction.create({
+    projectId: project._id,
+    action: "createProject",
+    txHash: receipt.hash,
+    status: "Completed",
+    userId,
+  });
+
+  return { project, receipt };
+};
+
 export const createProject = async (req, res) => {
   const { title, description, budget, deadline, freelancerId, milestones = [] } = req.body;
 
@@ -55,78 +123,37 @@ export const createProject = async (req, res) => {
   await project.save();
 
   try {
-    const budgetWei = ethers.parseEther(String(numericBudget));
-    const contract = getContract();
-
-    // Fail fast if the configured contract address has no code (likely wrong address or not deployed).
-    const code = await contract.runner.provider.getCode(contract.target);
-    if (code === "0x") {
-      console.error("Configured CHAINESCROW_CONTRACT_ADDRESS has no contract code. Check deployment address.");
-      throw new Error("Escrow contract not deployed at configured address");
-    }
-
-    console.log(`Creating project on-chain: ${title}, budget: ${numericBudget} ETH (${budgetWei} wei)`);
-    const tx = await contract.createProject(title, description, budgetWei);
-    console.log(`Tx sent: ${tx.hash}`);
-    const receipt = await tx.wait();
-    console.log(`Receipt received:`, receipt?.hash);
-
-    if (!receipt) {
-      console.warn("No receipt for project creation tx");
-      return res.status(201).json({ project, milestones: createdMilestones, warning: "Project created but on-chain ID not confirmed. Please try again." });
-    }
-
-    // Parse events with contract interface to extract projectId
-    let projectId = null;
-    if (receipt.logs && receipt.logs.length) {
-      for (const log of receipt.logs) {
-        try {
-          const parsed = contract.interface.parseLog(log);
-          if (parsed?.name === "ProjectCreated" && parsed.args?.projectId !== undefined) {
-            projectId = parsed.args.projectId;
-            console.log("Got projectId from event:", projectId.toString());
-            break;
-          }
-        } catch (err) {
-          // ignore non-matching logs
-        }
-      }
-    }
-    if (!projectId) {
-      console.log("Receipt logs (debug):", receipt.logs);
-    }
-
-    if (projectId === null) {
-      try {
-        const count = await contract.projectCount();
-        projectId = count;
-        console.warn(
-          "Could not extract projectId from receipt. Falling back to projectCount():",
-          projectId.toString()
-        );
-      } catch (fallbackErr) {
-        console.warn("Could not extract projectId; fallback failed:", fallbackErr.message);
-        projectId = 0;
-      }
-    }
-
-    project.contractProjectId = Number(projectId);
-    project.createTxHash = receipt.hash;
-    await project.save();
-    console.log(`Project saved with contractProjectId: ${project.contractProjectId}`);
-
-    await Transaction.create({
-      projectId: project._id,
-      action: "createProject",
-      txHash: receipt.hash,
-      status: "Completed",
-      userId: req.user._id,
-    });
+    await deployProjectOnChain(project, req.user._id);
   } catch (err) {
     console.error("On-chain project creation failed:", err.message, err.stack);
+    // Keep DB and chain state consistent: remove local records if chain mapping failed.
+    await Milestone.deleteMany({ projectId: project._id });
+    await Project.findByIdAndDelete(project._id);
+    return res.status(502).json({ message: `Project creation failed on-chain: ${err.message}` });
   }
 
   return res.status(201).json({ project, milestones: createdMilestones });
+};
+
+export const deployProject = async (req, res) => {
+  const project = await Project.findById(req.params.id);
+  if (!project) return res.status(404).json({ message: "Project not found" });
+
+  if (project.contractProjectId !== undefined && project.contractProjectId !== null) {
+    return res.status(400).json({ message: "Project is already deployed on-chain" });
+  }
+
+  if (project.clientId.toString() !== req.user._id.toString() && req.user.role !== "admin") {
+    return res.status(403).json({ message: "Only the project owner or admin can deploy" });
+  }
+
+  try {
+    await deployProjectOnChain(project, req.user._id);
+    res.json(project);
+  } catch (err) {
+    console.error("deployProject error:", err.message, err.stack);
+    res.status(502).json({ message: `Project deployment failed on-chain: ${err.message}` });
+  }
 };
 
 export const listProjects = async (req, res) => {
