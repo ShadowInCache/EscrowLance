@@ -9,6 +9,10 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+**/.env.local
+**/.env.development.local
+**/.env.test.local
+**/.env.production.local
 
 # Build artifacts
 frontend/dist/
@@ -18,6 +22,14 @@ backend/logs/
 blockchain/cache/
 blockchain/artifacts/
 blockchain/coverage/
+blockchain/deployments/*.json
+
+# CI and misc
+.npmrc
+*.pem
+*.key
+*.p12
+*.crt
 
 # Editor
 .DS_Store

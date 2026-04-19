@@ -1,15 +1,8 @@
 import { readFileSync } from "fs";
 import { ethers } from "ethers";
 
-// Load the full Hardhat artifact so events (e.g., ProjectCreated) are available for parsing.
 const artifact = JSON.parse(
-  readFileSync(
-    new URL(
-      "../../../blockchain/artifacts/contracts/FreelanceEscrow.sol/FreelanceEscrow.json",
-      import.meta.url
-    ),
-    "utf-8"
-  )
+  readFileSync(new URL("./abi/FreelanceEscrow.json", import.meta.url), "utf-8")
 );
 const abi = artifact.abi ?? artifact;
 

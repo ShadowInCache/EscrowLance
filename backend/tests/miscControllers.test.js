@@ -20,9 +20,9 @@ jest.mock("../src/models/Transaction.js", () => ({
   },
 }));
 
-jest.mock("../src/ipfs/pinataClient.js", () => ({
-  uploadBuffer: jest.fn(async () => ({ IpfsHash: "QmFile" })),
-  uploadJson: jest.fn(async () => ({ IpfsHash: "QmJson" })),
+jest.mock("../src/services/cloudinaryUploadService.js", () => ({
+  uploadFileBuffer: jest.fn(async () => ({ secure_url: "https://cloudinary.example/proof-file" })),
+  uploadJsonPayload: jest.fn(async () => ({ secure_url: "https://cloudinary.example/proof-json" })),
 }));
 
 const resFactory = () => ({
@@ -88,7 +88,12 @@ describe("misc controllers", () => {
 
     await uploadFile(req, res);
 
-    expect(res.json).toHaveBeenCalledWith({ ipfsHash: "QmFile" });
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ipfsHash: "https://cloudinary.example/proof-file",
+        storageProvider: "cloudinary",
+      })
+    );
   });
 
   it("uploadMetadata success", async () => {
@@ -97,6 +102,11 @@ describe("misc controllers", () => {
 
     await uploadMetadata(req, res);
 
-    expect(res.json).toHaveBeenCalledWith({ ipfsHash: "QmJson" });
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ipfsHash: "https://cloudinary.example/proof-json",
+        storageProvider: "cloudinary",
+      })
+    );
   });
 });

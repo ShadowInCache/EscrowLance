@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useWallet } from "../../hooks/useWallet.js";
 import { useAuth } from "../../context/AuthContext.jsx";
+import { SUPPORTED_CHAIN_HEX, SUPPORTED_CHAIN_ID, SUPPORTED_CHAIN_NAME } from "../../config/env.js";
 
 const Wallet = () => {
   const { user } = useAuth();
@@ -21,9 +22,7 @@ const Wallet = () => {
     address && user?.walletAddress && address.toLowerCase() === user.walletAddress.toLowerCase()
   );
   const showConnected = isConnected && walletMatchesUser;
-  const sepoliaChainIdHex = "0xaa36a7"; // 11155111
-  const sepoliaChainId = 11155111;
-  const onWrongNetwork = network && Number(network.chainId) !== sepoliaChainId;
+  const onWrongNetwork = network && Number(network.chainId) !== SUPPORTED_CHAIN_ID;
 
   const short = (val) => (val ? `${val.slice(0, 6)}...${val.slice(-4)}` : "-");
   const networkName = network?.name || "-";
@@ -45,7 +44,7 @@ const Wallet = () => {
   };
 
   const primaryAction = () => {
-    if (onWrongNetwork) return switchToChain(sepoliaChainIdHex);
+    if (onWrongNetwork) return switchToChain(SUPPORTED_CHAIN_HEX);
     if (!isConnected) return handleSwitch();
     if (!walletMatchesUser) return handleSwitch();
     return undefined;
@@ -53,7 +52,7 @@ const Wallet = () => {
 
   const primaryLabel = () => {
     if (showConnected) return "Connected";
-    if (onWrongNetwork) return isSwitching ? "Switching..." : "Switch to Sepolia";
+    if (onWrongNetwork) return isSwitching ? "Switching..." : `Switch to ${SUPPORTED_CHAIN_NAME}`;
     if (!isConnected) return "Connect MetaMask";
     if (!walletMatchesUser) return "Switch to profile wallet";
     return "Connect";
@@ -196,10 +195,10 @@ const Wallet = () => {
           {onWrongNetwork && (
             <button
               className="mt-3 text-xs text-primary underline underline-offset-4 disabled:opacity-60"
-              onClick={() => switchToChain(sepoliaChainIdHex)}
+              onClick={() => switchToChain(SUPPORTED_CHAIN_HEX)}
               disabled={isSwitching}
             >
-              {isSwitching ? "Switching..." : "Switch to Sepolia"}
+              {isSwitching ? "Switching..." : `Switch to ${SUPPORTED_CHAIN_NAME}`}
             </button>
           )}
         </div>

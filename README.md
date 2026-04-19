@@ -6,11 +6,11 @@
 ![Sepolia](https://img.shields.io/badge/Network-Sepolia-8145dc?logo=ethereum&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f)
 
-EscrowLancer is a hybrid on-chain/off-chain, milestone-based escrow for freelance projects. Clients fund a Sepolia smart contract, freelancers submit proofs (IPFS), and payouts release after client approval. The app ships with React + Tailwind, Express + MongoDB, and a Hardhat Solidity contract (OpenZeppelin security).
+EscrowLancer is a hybrid on-chain/off-chain, milestone-based escrow for freelance projects. Clients fund a Sepolia smart contract, freelancers submit proofs (Cloudinary), and payouts release after client approval. The app ships with React + Tailwind, Express + MongoDB, and a Hardhat Solidity contract (OpenZeppelin security).
 
 ## Tech Stack
 - Frontend: React (Vite), Tailwind, React Router, Axios, MetaMask/ethers provider hook
-- Backend: Node.js, Express, MongoDB/Mongoose, JWT auth, Multer uploads, Pinata/IPFS helper, Ethers
+- Backend: Node.js, Express, MongoDB/Mongoose, JWT auth, Multer uploads, Cloudinary helper, Ethers
 - Blockchain: Solidity (Hardhat), OpenZeppelin Ownable + ReentrancyGuard, Sepolia-ready
 
 ## Project Structure
@@ -35,6 +35,10 @@ See `.env.example` and `backend/.env.example` for the full list:
 - Frontend: `VITE_API_BASE_URL`, `VITE_CHAINESCROW_CONTRACT_ADDRESS`, `VITE_SEPOLIA_CHAIN_ID`
 - Hardhat: `SEPOLIA_RPC_URL`, `PRIVATE_KEY`
 
+## Production Deployment
+
+See the complete production deployment guide in `docs/production-deployment.md`.
+
 ## API Surface (summary)
 - Auth: `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/profile`
 - Projects: create/list/detail/update status/fund/assign
@@ -56,10 +60,10 @@ See `.env.example` and `backend/.env.example` for the full list:
 - Transactions: projectId, milestoneId, amount, txHash, status
 - Disputes: projectId, milestoneId, reason, raisedBy, status, resolution
 
-## IPFS Flow
-1) Freelancer uploads file → backend `POST /api/upload` (Multer memory) → Pinata → IPFS hash
-2) Hash saved in Mongo + sent to smart contract in `submitMilestone`
-3) UI renders proof link via IPFS gateway
+## Proof Upload Flow
+1) Freelancer uploads file → backend `POST /api/upload` (Multer memory) → Cloudinary URL
+2) Proof URL/hash reference saved in Mongo + sent to smart contract in `submitMilestone`
+3) UI renders proof link directly from Cloudinary
 
 ## Frontend Pages
 - Landing, Login, Signup

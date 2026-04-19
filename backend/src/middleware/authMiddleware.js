@@ -6,9 +6,16 @@ export const protect = async (req, res, next) => {
 
   if (token && token.startsWith("Bearer")) {
     try {
+      if (!process.env.JWT_SECRET) {
+        return res.status(500).json({ message: "Server auth is not configured" });
+      }
+
       token = token.split(" ")[1];
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       req.user = await User.findById(decoded.id).select("-password");
+      if (!req.user) {
+        return res.status(401).json({ message: "Not authorized" });
+      }
       return next();
     } catch (err) {
       return res.status(401).json({ message: "Not authorized" });
