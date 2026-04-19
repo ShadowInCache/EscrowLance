@@ -1,9 +1,8 @@
 import Milestone from "../models/Milestone.js";
 import Project from "../models/Project.js";
 import Transaction from "../models/Transaction.js";
-import { ethers } from "ethers";
+import { getContract } from "../blockchain/contractClient.js";
 import {
-  submitMilestoneOnChain,
   approveMilestoneOnChain,
   releasePaymentOnChain,
 } from "../services/blockchainService.js";
@@ -17,7 +16,7 @@ export const createMilestone = async (req, res) => {
 
 export const submitMilestone = async (req, res) => {
   try {
-    const { projectId, milestoneId, workHash, ipfsHash, amount, title, deadline } = req.body;
+    const { projectId, milestoneId, workHash, ipfsHash, amount, title, deadline, submitTxHash } = req.body;
     const milestone = await Milestone.findById(milestoneId);
     if (!milestone) return res.status(404).json({ message: "Milestone not found" });
     if (milestone.status !== "Pending") return res.status(400).json({ message: "Milestone already submitted" });
@@ -30,19 +29,45 @@ export const submitMilestone = async (req, res) => {
     if (milestone.contractMilestoneId === undefined || milestone.contractMilestoneId === null) {
       return res.status(400).json({ message: `Milestone not properly linked to contract. Missing contractMilestoneId. Milestone ID: ${milestone._id}` });
     }
+    if (!submitTxHash) {
+      return res.status(400).json({ message: "submitTxHash is required" });
+    }
 
-    console.log(`Submitting milestone ${milestoneId} for project ${projectId}`);
-    const tx = await submitMilestoneOnChain({
-      projectId: project.contractProjectId,
-      milestoneId: milestone.contractMilestoneId,
-      workHash,
-      amountWei: ethers.parseEther(String(amount || milestone.amount || 0)),
-      title: title || milestone.title,
-      deadline: deadline ? Math.floor(new Date(deadline).getTime() / 1000) : 0,
-    });
-    console.log(`Transaction sent: ${tx.hash}`);
-    const receipt = await tx.wait();
-    console.log(`Transaction mined: ${receipt.hash}`);
+    const contract = getContract();
+    const receipt = await contract.runner.provider.getTransactionReceipt(submitTxHash);
+    if (!receipt) {
+      return res.status(400).json({ message: "Submission transaction not found on-chain yet" });
+    }
+    if (receipt.status !== 1) {
+      return res.status(400).json({ message: "Submission transaction failed on-chain" });
+    }
+    if (req.user.walletAddress && receipt.from && receipt.from.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      return res.status(403).json({ message: "Submission transaction was not signed by the freelancer wallet" });
+    }
+
+    const milestoneEvent = receipt.logs
+      ? receipt.logs
+          .map((log) => {
+            try {
+              return contract.interface.parseLog(log);
+            } catch (err) {
+              return null;
+            }
+          })
+          .find((parsed) => parsed?.name === "MilestoneSubmitted")
+      : null;
+    if (!milestoneEvent) {
+      return res.status(400).json({ message: "Submission event not found in transaction receipt" });
+    }
+    if (Number(milestoneEvent.args.projectId) !== Number(project.contractProjectId)) {
+      return res.status(400).json({ message: "Submission transaction projectId does not match" });
+    }
+    if (Number(milestoneEvent.args.milestoneId) !== Number(milestone.contractMilestoneId)) {
+      return res.status(400).json({ message: "Submission transaction milestoneId does not match" });
+    }
+    if ((milestoneEvent.args.workHash || "") !== (workHash || "")) {
+      return res.status(400).json({ message: "Submission transaction workHash does not match" });
+    }
 
     milestone.status = "Submitted";
     if (amount) milestone.amount = amount;

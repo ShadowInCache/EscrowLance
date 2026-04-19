@@ -10,10 +10,13 @@ const disputeSchema = new mongoose.Schema(
     resolution: String,
     raiseTxHash: String,
     resolveTxHash: String,
+    resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    resolvedAt: Date,
     comments: [
       {
         text: String,
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        replyTo: { type: mongoose.Schema.Types.ObjectId },
         createdAt: { type: Date, default: Date.now },
       },
     ],

@@ -15,16 +15,20 @@ import { useToast } from "../../context/ToastContext.jsx";
 const etherscanTx = (hash) =>
   hash ? `${import.meta.env.VITE_ETHERSCAN_BASE || "https://sepolia.etherscan.io"}/tx/${hash}` : null;
 
+const toId = (value) => (value ? String(value) : "");
+
 const Disputes = () => {
   const [form, setForm] = useState({ projectId: "", milestoneId: "", reason: "" });
   const [message, setMessage] = useState(null);
+  const [messageType, setMessageType] = useState("success");
   const [disputes, setDisputes] = useState([]);
   const [resolutionDrafts, setResolutionDrafts] = useState({});
   const [projects, setProjects] = useState([]);
   const [milestones, setMilestones] = useState([]);
   const [commentDrafts, setCommentDrafts] = useState({});
   const [evidenceDrafts, setEvidenceDrafts] = useState({});
-  const [uploading, setUploading] = useState(false);
+  const [replyTargets, setReplyTargets] = useState({});
+  const [uploadingByDispute, setUploadingByDispute] = useState({});
   const { user } = useAuth();
   const { addToast } = useToast();
 
@@ -46,7 +50,10 @@ const Disputes = () => {
   };
 
   useEffect(() => {
-    Promise.all([loadDisputes(), loadProjects()]).catch(console.error);
+    Promise.all([loadDisputes(), loadProjects()]).catch((err) => {
+      console.error(err);
+      addToast("Failed to load disputes", "error");
+    });
   }, []);
 
   useEffect(() => {
@@ -64,12 +71,22 @@ const Disputes = () => {
   const onSubmit = async (e) => {
     e.preventDefault();
     try {
+      if (!form.projectId || !form.reason.trim()) {
+        setMessageType("error");
+        setMessage("Project and reason are required.");
+        return;
+      }
+
       const res = await raiseDispute(form);
+      setMessageType("success");
       setMessage(`Dispute created ${res._id || ""}`);
+      setForm({ projectId: "", milestoneId: "", reason: "" });
+      setMilestones([]);
       await loadDisputes();
       addToast("Dispute raised", "success");
     } catch (err) {
       const msg = err?.response?.data?.message || err.message || "Failed to raise dispute";
+      setMessageType("error");
       setMessage(msg);
       addToast(msg, "error");
     }
@@ -89,43 +106,53 @@ const Disputes = () => {
   const onResolve = async (dispute) => {
     const draft = resolutionDrafts[dispute._id] || {};
     if (!draft.resolution) {
+      setMessageType("error");
       setMessage("Add a resolution summary first.");
       return;
     }
     try {
       await resolveDispute({
+        disputeId: dispute._id,
         projectId: dispute.projectId?._id || dispute.projectId,
         refundClient: draft.refundClient ?? true,
         resolution: draft.resolution,
       });
+      setMessageType("success");
       setMessage("Resolution submitted.");
       await loadDisputes();
       addToast("Resolution submitted", "success");
     } catch (err) {
-      setMessage("Failed to submit resolution.");
+      const msg = err?.response?.data?.message || "Failed to submit resolution.";
+      setMessageType("error");
+      setMessage(msg);
+      addToast(msg, "error");
       console.error(err);
-      addToast("Resolution failed", "error");
     }
   };
 
   const onComment = async (dispute) => {
     const text = commentDrafts[dispute._id] || "";
     if (!text.trim()) return;
+
+    const replyTo = replyTargets[dispute._id];
     try {
-      const updated = await addDisputeComment(dispute._id, { text });
+      const updated = await addDisputeComment(dispute._id, { text, replyTo });
       setDisputes((prev) => prev.map((d) => (d._id === dispute._id ? updated : d)));
       setCommentDrafts((prev) => ({ ...prev, [dispute._id]: "" }));
+      setReplyTargets((prev) => ({ ...prev, [dispute._id]: null }));
       addToast("Comment added", "success");
     } catch (err) {
       console.error(err);
-      addToast("Failed to add comment", "error");
+      const msg = err?.response?.data?.message || "Failed to add comment";
+      addToast(msg, "error");
     }
   };
 
   const onEvidenceUpload = async (dispute) => {
     const file = evidenceDrafts[dispute._id];
     if (!file) return;
-    setUploading(true);
+
+    setUploadingByDispute((prev) => ({ ...prev, [dispute._id]: true }));
     try {
       const res = await uploadProofFile(file);
       const updated = await addDisputeEvidence(dispute._id, { ipfsHash: res.ipfsHash, filename: file.name });
@@ -134,9 +161,10 @@ const Disputes = () => {
       addToast("Evidence uploaded", "success");
     } catch (err) {
       console.error(err);
-      addToast("Evidence upload failed", "error");
+      const msg = err?.response?.data?.message || "Evidence upload failed";
+      addToast(msg, "error");
     } finally {
-      setUploading(false);
+      setUploadingByDispute((prev) => ({ ...prev, [dispute._id]: false }));
     }
   };
 
@@ -148,6 +176,18 @@ const Disputes = () => {
   };
 
   const friendlyDate = (ts) => (ts ? new Date(ts).toLocaleString() : "");
+
+  const getUserBadge = (actor) => {
+    if (!actor) return "Unknown user";
+    return `${actor.name || "Unknown"}${actor.role ? ` (${actor.role})` : ""}`;
+  };
+
+  const getReplyTarget = (dispute, comment) => {
+    if (!comment?.replyTo) return null;
+    return (dispute.comments || []).find((entry) => toId(entry._id) === toId(comment.replyTo)) || null;
+  };
+
+  const isOpenDispute = (status) => status?.toLowerCase() === "open";
 
   return (
     <div className="space-y-8">
@@ -240,7 +280,11 @@ const Disputes = () => {
                 <button className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-primary/30" type="submit">
                   Raise dispute
                 </button>
-                {message && <p className="text-sm text-emerald-400">{message}</p>}
+                {message && (
+                  <p className={`text-sm ${messageType === "error" ? "text-rose-400" : "text-emerald-400"}`}>
+                    {message}
+                  </p>
+                )}
               </div>
             </form>
           </div>
@@ -257,6 +301,14 @@ const Disputes = () => {
             <div className="space-y-4">
               {disputes.map((d) => (
                 <div key={d._id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 shadow-sm">
+                  {(() => {
+                    const projectClient = d.projectId?.clientId;
+                    const projectFreelancer = d.projectId?.freelancerId;
+                    const isUploading = Boolean(uploadingByDispute[d._id]);
+                    const activeReplyId = replyTargets[d._id];
+
+                    return (
+                      <>
                   <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 text-sm text-slate-300">
@@ -265,6 +317,12 @@ const Disputes = () => {
                       </div>
                       <div className="text-white text-sm font-semibold">{d.projectId?.title || d.projectId}</div>
                       <div className="text-slate-400 text-sm">Milestone: {d.milestoneId?.title || d.milestoneId}</div>
+                      <div className="text-slate-500 text-xs">
+                        Raised by {getUserBadge(d.raisedBy)}
+                      </div>
+                      <div className="text-slate-500 text-xs">
+                        Client: {getUserBadge(projectClient)} | Freelancer: {getUserBadge(projectFreelancer)}
+                      </div>
                       {d.reason && <div className="text-slate-200 text-sm pt-1">{d.reason}</div>}
                       {d.resolution && <div className="text-xs text-emerald-300">Resolution: {d.resolution}</div>}
                     </div>
@@ -305,17 +363,44 @@ const Disputes = () => {
                       </div>
                       <div className="space-y-2">
                         {d.comments?.map((c, idx) => (
-                          <div key={idx} className="rounded border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
+                            <div
+                              key={c._id || idx}
+                              className={`rounded border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200 ${c.replyTo ? "ml-4 border-l-2 border-l-primary/60" : ""}`}
+                            >
                             <div className="flex items-center justify-between gap-2">
                               <span>{c.text}</span>
-                              <span className="text-slate-500">{c.user?.name || ""}</span>
+                                <span className="text-slate-500">{getUserBadge(c.user)}</span>
                             </div>
+                              {c.replyTo && (
+                                <div className="text-[11px] text-primary/90">
+                                  Reply to {getUserBadge(getReplyTarget(d, c)?.user)}
+                                </div>
+                              )}
                             <div className="text-slate-500">{c.createdAt ? friendlyDate(c.createdAt) : ""}</div>
+                              <button
+                                className="mt-1 text-[11px] text-primary underline"
+                                type="button"
+                                onClick={() => setReplyTargets((prev) => ({ ...prev, [d._id]: c._id }))}
+                              >
+                                Reply
+                              </button>
                           </div>
                         ))}
+                          {activeReplyId && (
+                            <div className="flex items-center justify-between rounded border border-primary/30 bg-primary/10 px-2 py-1 text-[11px] text-primary">
+                              <span>Replying to selected comment</span>
+                              <button
+                                className="underline"
+                                type="button"
+                                onClick={() => setReplyTargets((prev) => ({ ...prev, [d._id]: null }))}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          )}
                         <textarea
                           className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white focus:border-primary focus:outline-none"
-                          placeholder="Add a comment"
+                            placeholder={activeReplyId ? "Write your reply" : "Add a comment"}
                           value={commentDrafts[d._id] || ""}
                           onChange={(e) => setCommentDrafts((prev) => ({ ...prev, [d._id]: e.target.value }))}
                         />
@@ -329,22 +414,23 @@ const Disputes = () => {
                             className="rounded border border-slate-700 bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 disabled:opacity-60"
                             type="button"
                             onClick={() => onEvidenceUpload(d)}
-                            disabled={uploading}
+                            disabled={isUploading || !evidenceDrafts[d._id]}
                           >
-                            {uploading ? "Uploading..." : "Attach evidence"}
+                            {isUploading ? "Uploading..." : "Attach evidence"}
                           </button>
                           <button
-                            className="rounded bg-primary px-3 py-1 text-xs font-semibold text-slate-950"
+                            className="rounded bg-primary px-3 py-1 text-xs font-semibold text-slate-950 disabled:opacity-60"
                             type="button"
                             onClick={() => onComment(d)}
+                            disabled={!commentDrafts[d._id]?.trim()}
                           >
-                            Post comment
+                            {activeReplyId ? "Post reply" : "Post comment"}
                           </button>
                         </div>
                       </div>
                     </div>
 
-                    {user?.role && ["client", "admin"].includes(user.role) && d.status === "Open" && (
+                    {user?.role && ["client", "admin"].includes(user.role) && isOpenDispute(d.status) && (
                       <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-sm text-slate-200">
                         <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Resolution</div>
                         <textarea
@@ -383,6 +469,9 @@ const Disputes = () => {
                       </div>
                     )}
                   </div>
+                      </>
+                    );
+                  })()}
                 </div>
               ))}
 
