@@ -17,8 +17,8 @@ const setAlias = (primaryKey, aliases = []) => {
 };
 
 export const normalizeRuntimeEnv = () => {
-  setAlias("MONGO_URI", ["MONGODB_URI", "DATABASE_URL"]);
-  setAlias("JWT_SECRET", ["JWT_KEY", "AUTH_JWT_SECRET"]);
+  setAlias("MONGO_URI", ["MONGODB_URI", "MONGO_URL", "MONGODB_URL", "DATABASE_URL"]);
+  setAlias("JWT_SECRET", ["JWT_KEY", "JWT_SECRET_KEY", "AUTH_JWT_SECRET", "APP_SECRET", "SECRET_KEY"]);
   setAlias("CLIENT_URL", ["FRONTEND_URL"]);
   setAlias("SEPOLIA_RPC_URL", ["RPC_URL", "ETH_RPC_URL", "ALCHEMY_SEPOLIA_RPC_URL", "INFURA_SEPOLIA_RPC_URL"]);
   setAlias("CHAINESCROW_CONTRACT_ADDRESS", ["CONTRACT_ADDRESS", "ESCROW_CONTRACT_ADDRESS", "FREELANCE_ESCROW_CONTRACT_ADDRESS"]);
