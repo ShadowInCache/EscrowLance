@@ -1,12 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { createProject, listFreelancers } from "../../services/api.js";
+import { useToast } from "../../context/ToastContext.jsx";
 
 const newMilestone = () => ({ title: "", description: "", amount: "", deadline: "" });
 
 const CreateProject = () => {
+  const navigate = useNavigate();
+  const { addToast } = useToast();
   const [form, setForm] = useState({ title: "", description: "", budget: "", deadline: "", freelancerId: "" });
   const [milestones, setMilestones] = useState([newMilestone()]);
   const [message, setMessage] = useState(null);
+  const [messageType, setMessageType] = useState("success");
+  const [loading, setLoading] = useState(false);
   const [freelancers, setFreelancers] = useState([]);
 
   const milestoneTotal = useMemo(
@@ -38,21 +44,33 @@ const CreateProject = () => {
     e.preventDefault();
     setMessage(null);
     if (!form.title || !form.description || !form.budget) {
+      setMessageType("error");
       setMessage("Title, description, and budget are required");
       return;
     }
     if (budgetNumber <= 0) {
+      setMessageType("error");
       setMessage("Budget must be greater than 0");
       return;
     }
     if (form.deadline && new Date(form.deadline) < new Date()) {
+      setMessageType("error");
       setMessage("Deadline must be in the future");
       return;
     }
     if (!budgetMatches) {
+      setMessageType("error");
       setMessage("Milestone total must equal budget");
       return;
     }
+
+    const invalidMilestone = milestones.find((m) => !m.title || Number(m.amount || 0) <= 0);
+    if (invalidMilestone) {
+      setMessageType("error");
+      setMessage("Each milestone needs a title and amount greater than 0.");
+      return;
+    }
+
     const payload = {
       ...form,
       budget: budgetNumber,
@@ -61,8 +79,29 @@ const CreateProject = () => {
         amount: Number(m.amount),
       })),
     };
-    const res = await createProject(payload);
-    setMessage(`Project created with id ${res.project._id}`);
+
+    if (!String(form.freelancerId || "").trim()) {
+      delete payload.freelancerId;
+    } else {
+      payload.freelancerId = String(form.freelancerId).trim();
+    }
+
+    setLoading(true);
+    try {
+      const res = await createProject(payload);
+      setMessageType("success");
+      setMessage(`Project created with id ${res.project._id}`);
+      addToast("Project created", "success");
+      navigate(`/projects/${res.project._id}`);
+    } catch (err) {
+      console.error(err);
+      const msg = err?.response?.data?.message || err.message || "Project creation failed";
+      setMessageType("error");
+      setMessage(msg);
+      addToast(msg, "error");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -237,12 +276,15 @@ const CreateProject = () => {
 
             <div className="flex items-center gap-3">
               <button
-                className="bg-primary px-5 py-2.5 rounded-lg text-slate-950 font-semibold hover:opacity-90"
+                className="bg-primary px-5 py-2.5 rounded-lg text-slate-950 font-semibold hover:opacity-90 disabled:opacity-60"
                 type="submit"
+                disabled={loading}
               >
-                Create project
+                {loading ? "Creating..." : "Create project"}
               </button>
-              {message && <p className="text-sm text-emerald-400">{message}</p>}
+              {message && (
+                <p className={`text-sm ${messageType === "error" ? "text-rose-400" : "text-emerald-400"}`}>{message}</p>
+              )}
             </div>
           </form>
         </div>

@@ -6,6 +6,7 @@ import {
   updateStatus,
   fundProject,
   assignFreelancer,
+  syncFreelancerAssignment,
   deployProject,
   cancelProject,
   refundClient,
@@ -22,6 +23,7 @@ router.post("/:id/deploy", protect, requireRole(["client", "admin"]), deployProj
 router.put("/:id/status", protect, updateStatus);
 router.post("/:id/fund", protect, requireRole(["client", "admin"]), fundProject);
 router.post("/:id/assign", protect, requireRole(["client", "admin"]), assignFreelancer);
+router.post("/:id/sync-assignment", protect, requireRole(["client", "freelancer", "admin"]), syncFreelancerAssignment);
 router.post("/:id/cancel", protect, requireRole(["client", "admin"]), cancelProject);
 router.delete("/:id", protect, deleteProject);
 router.post("/:id/refund", protect, requireRole(["client", "admin"]), refundClient);

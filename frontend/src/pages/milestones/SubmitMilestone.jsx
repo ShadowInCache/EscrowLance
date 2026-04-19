@@ -1,13 +1,29 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ethers } from "ethers";
-import { submitMilestone, fetchProjects, listMilestones, uploadProofFile } from "../../services/api.js";
+import {
+  submitMilestone,
+  fetchProjects,
+  listMilestones,
+  uploadProofFile,
+  syncProjectFreelancerAssignment,
+} from "../../services/api.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
 import { useWallet } from "../../hooks/useWallet.js";
 import { getFreelanceEscrowContract, getOnChainProject } from "../../blockchain/freelanceEscrow.js";
 
 const SubmitMilestone = () => {
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+  const ONCHAIN_PROJECT_STATUS = {
+    CREATED: 0,
+    FUNDED: 1,
+    IN_PROGRESS: 2,
+    SUBMITTED: 3,
+    COMPLETED: 4,
+    CANCELLED: 5,
+    DISPUTED: 6,
+  };
   const [form, setForm] = useState({ projectId: "", milestoneId: "", workHash: "", ipfsHash: "" });
   const [message, setMessage] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -18,9 +34,70 @@ const SubmitMilestone = () => {
   const [file, setFile] = useState(null);
   const { user } = useAuth();
   const { addToast } = useToast();
-  const { provider, address, connect, network, switchToChain, isConnected } = useWallet();
+  const { provider, address, connect, switchToChain, isConnected } = useWallet();
   const sepoliaChainId = 11155111;
   const sepoliaChainIdHex = "0xaa36a7";
+
+  const getFreshProvider = () => {
+    if (!window.ethereum) return null;
+    return new ethers.BrowserProvider(window.ethereum);
+  };
+
+  const waitForExpectedChain = async (expectedChainId, attempts = 12, delayMs = 150) => {
+    if (!window.ethereum) return false;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const currentChainHex = await window.ethereum.request({ method: "eth_chainId" });
+        const currentChainId = Number.parseInt(currentChainHex, 16);
+        if (currentChainId === expectedChainId) return true;
+      } catch (err) {
+        console.error("Failed reading chain id", err);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    return false;
+  };
+
+  const describeOnChainStatus = (statusValue) => {
+    switch (statusValue) {
+      case ONCHAIN_PROJECT_STATUS.CREATED:
+        return "Created";
+      case ONCHAIN_PROJECT_STATUS.FUNDED:
+        return "Funded";
+      case ONCHAIN_PROJECT_STATUS.IN_PROGRESS:
+        return "InProgress";
+      case ONCHAIN_PROJECT_STATUS.SUBMITTED:
+        return "Submitted";
+      case ONCHAIN_PROJECT_STATUS.COMPLETED:
+        return "Completed";
+      case ONCHAIN_PROJECT_STATUS.CANCELLED:
+        return "Cancelled";
+      case ONCHAIN_PROJECT_STATUS.DISPUTED:
+        return "Disputed";
+      default:
+        return "Unknown";
+    }
+  };
+
+  const getInactiveStatusGuidance = (statusValue) => {
+    switch (statusValue) {
+      case ONCHAIN_PROJECT_STATUS.CREATED:
+        return "Client must fund the escrow first, then assign freelancer on project details.";
+      case ONCHAIN_PROJECT_STATUS.SUBMITTED:
+        return "A submitted milestone is pending client action. Ask the client to approve and release payment first.";
+      case ONCHAIN_PROJECT_STATUS.COMPLETED:
+        return "Project is already completed on-chain.";
+      case ONCHAIN_PROJECT_STATUS.CANCELLED:
+        return "Project was cancelled on-chain.";
+      case ONCHAIN_PROJECT_STATUS.DISPUTED:
+        return "Project is in dispute. Resolve dispute before submitting milestones.";
+      default:
+        return "Open project details and ensure escrow is funded and freelancer is assigned.";
+    }
+  };
 
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
@@ -57,62 +134,148 @@ const SubmitMilestone = () => {
     }
     const target = milestones.find((m) => m._id === form.milestoneId);
     const selectedProject = projects.find((p) => p._id === form.projectId);
+    const effectiveWorkHash = (form.workHash || form.ipfsHash || "").trim();
+
     if (!target) {
       setError("Select a valid milestone first");
+      return;
+    }
+    if (!selectedProject) {
+      setError("Select a valid project first");
       return;
     }
     if (target && target.status !== "Pending") {
       setError("Only Pending milestones can be submitted.");
       return;
     }
-    if (!selectedProject?.contractProjectId && selectedProject?.contractProjectId !== 0) {
+    if (target.contractMilestoneId === undefined || target.contractMilestoneId === null) {
+      setError("This milestone is not linked to an on-chain milestone index yet.");
+      return;
+    }
+    if (selectedProject.contractProjectId === undefined || selectedProject.contractProjectId === null) {
       setError("This project is not deployed on-chain yet.");
       return;
     }
-    if (!provider) {
+    if (!effectiveWorkHash) {
+      setError("Upload proof to IPFS or provide a work hash before submission.");
+      return;
+    }
+    if (!window.ethereum && !provider) {
       setError("MetaMask is not available in this browser.");
       return;
     }
-    const currentNetwork = await provider.getNetwork();
+
+    let activeProvider = provider || getFreshProvider();
+    if (!activeProvider) {
+      setError("MetaMask is not available in this browser.");
+      return;
+    }
+
+    let connectedAddress = address;
     if (!isConnected) {
       try {
-        await connect();
+        connectedAddress = await connect();
+        activeProvider = getFreshProvider() || activeProvider;
       } catch (err) {
         setError(err?.message || "Connect MetaMask first.");
         return;
       }
     }
+
+    let currentNetwork;
+    try {
+      currentNetwork = await activeProvider.getNetwork();
+    } catch (networkErr) {
+      activeProvider = getFreshProvider() || activeProvider;
+      currentNetwork = await activeProvider.getNetwork();
+    }
+
     if (Number(currentNetwork.chainId) !== sepoliaChainId) {
       try {
         await switchToChain(sepoliaChainIdHex);
+
+        const switched = await waitForExpectedChain(sepoliaChainId);
+        if (!switched) {
+          throw new Error("Network switch timed out. Please confirm MetaMask is on Sepolia.");
+        }
+
+        activeProvider = getFreshProvider() || activeProvider;
+        currentNetwork = await activeProvider.getNetwork();
       } catch (err) {
         setError(err?.message || "Switch MetaMask to Sepolia first.");
         return;
       }
     }
-    if (address && user?.walletAddress && address.toLowerCase() !== user.walletAddress.toLowerCase()) {
+
+    if (Number(currentNetwork.chainId) !== sepoliaChainId) {
+      setError("MetaMask must be connected to Sepolia.");
+      return;
+    }
+
+    const signer = await activeProvider.getSigner();
+    const signerAddress = await signer.getAddress();
+    const activeAddress = connectedAddress || signerAddress;
+    if (activeAddress && user?.walletAddress && activeAddress.toLowerCase() !== user.walletAddress.toLowerCase()) {
       setError("MetaMask must match your freelancer profile wallet.");
       return;
     }
+
     setLoading(true);
     try {
-      const onChainProject = await getOnChainProject(provider, selectedProject.contractProjectId);
-      const onChainFreelancer = onChainProject?.freelancer;
-      if (!onChainFreelancer || onChainFreelancer === "0x0000000000000000000000000000000000000000") {
-        setError("No freelancer is assigned on-chain for this project yet.");
+      let onChainProject = await getOnChainProject(activeProvider, selectedProject.contractProjectId);
+      let onChainFreelancer = onChainProject?.freelancer?.toLowerCase?.();
+
+      if (!onChainFreelancer || onChainFreelancer === ZERO_ADDRESS) {
+        const selectedFreelancerId = selectedProject?.freelancerId?._id || selectedProject?.freelancerId;
+        const activeUserId = user?._id || user?.id;
+        const canSyncOwnAssignment =
+          selectedFreelancerId && activeUserId && String(selectedFreelancerId) === String(activeUserId);
+
+        if (canSyncOwnAssignment) {
+          try {
+            await syncProjectFreelancerAssignment(selectedProject._id);
+            activeProvider = getFreshProvider() || activeProvider;
+            onChainProject = await getOnChainProject(activeProvider, selectedProject.contractProjectId);
+            onChainFreelancer = onChainProject?.freelancer?.toLowerCase?.();
+          } catch (syncErr) {
+            const syncMessage =
+              syncErr?.response?.data?.message ||
+              "Could not sync freelancer assignment on-chain. Ask the client to assign from project details.";
+            setError(syncMessage);
+            return;
+          }
+        }
+      }
+
+      if (!onChainFreelancer || onChainFreelancer === ZERO_ADDRESS) {
+        setError("No freelancer is assigned on-chain for this project yet. Ask the client to assign freelancer on project page.");
         return;
       }
-      if (!address || onChainFreelancer.toLowerCase() !== address.toLowerCase()) {
-        setError(`This project is assigned on-chain to ${onChainFreelancer}, not your connected wallet.`);
+
+      const onChainStatusValue = Number(onChainProject?.status);
+      const allowedSubmissionStatuses = new Set([
+        ONCHAIN_PROJECT_STATUS.FUNDED,
+        ONCHAIN_PROJECT_STATUS.IN_PROGRESS,
+      ]);
+      if (!allowedSubmissionStatuses.has(onChainStatusValue)) {
+        const statusLabel = describeOnChainStatus(onChainStatusValue);
+        const guidance = getInactiveStatusGuidance(onChainStatusValue);
+        setError(`On-chain status is ${statusLabel}. ${guidance}`);
         return;
       }
-      const contract = await getFreelanceEscrowContract(provider);
+
+      if (!activeAddress || onChainFreelancer.toLowerCase() !== activeAddress.toLowerCase()) {
+        setError(`This project is assigned on-chain to ${onChainFreelancer}, not your connected wallet (${activeAddress || "none"}).`);
+        return;
+      }
+
+      const contract = await getFreelanceEscrowContract(activeProvider);
       const milestoneAmountWei = ethers.parseEther(String(target?.amount || 0));
       const deadline = target?.deadline ? Math.floor(new Date(target.deadline).getTime() / 1000) : 0;
       const tx = await contract.submitMilestone(
         selectedProject.contractProjectId,
         target.contractMilestoneId,
-        form.workHash || "",
+        effectiveWorkHash,
         milestoneAmountWei,
         target.title || "",
         deadline
@@ -121,6 +284,7 @@ const SubmitMilestone = () => {
       const data = await submitMilestone({
         ...form,
         milestoneId: form.milestoneId,
+        workHash: effectiveWorkHash,
         submitTxHash: receipt.hash,
       });
       setMessage(`Submitted milestone ${data._id || form.milestoneId}`);
@@ -144,7 +308,11 @@ const SubmitMilestone = () => {
     setError(null);
     try {
       const res = await uploadProofFile(file);
-      setForm((prev) => ({ ...prev, ipfsHash: res.ipfsHash }));
+      setForm((prev) => ({
+        ...prev,
+        ipfsHash: res.ipfsHash,
+        workHash: prev.workHash || res.ipfsHash,
+      }));
       setMessage(`Uploaded proof: ${res.ipfsHash}`);
       addToast("Proof uploaded to IPFS", "success");
     } catch (err) {
@@ -260,6 +428,7 @@ const SubmitMilestone = () => {
               className="w-full bg-slate-800 px-3 py-2 rounded border border-slate-700 focus:border-primary focus:outline-none"
               name="workHash"
               placeholder="Enter IPFS CID or other proof reference"
+              value={form.workHash}
               onChange={onChange}
             />
           </label>

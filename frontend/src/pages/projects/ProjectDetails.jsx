@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { fetchProject, listMilestones, listProjectTransactions, listFreelancers, assignFreelancerApi, deleteProject, deployProject } from "../../services/api.js";
+import { ethers } from "ethers";
+import {
+  fetchProject,
+  listMilestones,
+  listProjectTransactions,
+  listFreelancers,
+  assignFreelancerApi,
+  deleteProject,
+  deployProject,
+  fundProject,
+} from "../../services/api.js";
 import MilestoneCard from "../../components/MilestoneCard.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
@@ -14,18 +24,44 @@ const ProjectDetails = () => {
   const [freelancers, setFreelancers] = useState([]);
   const [assignSel, setAssignSel] = useState("");
   const [assignLoading, setAssignLoading] = useState(false);
+  const [fundAmount, setFundAmount] = useState("");
+  const [fundLoading, setFundLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deployLoading, setDeployLoading] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
   const [error, setError] = useState("");
   const { user } = useAuth();
   const { addToast } = useToast();
 
+  const isClientSide = user?.role && ["client", "admin"].includes(user.role);
+
+  const loadProjectData = async () => {
+    setPageLoading(true);
+    const [projectData, milestoneData, txData] = await Promise.all([
+      fetchProject(id),
+      listMilestones(id),
+      listProjectTransactions(id),
+    ]);
+    setProject(projectData);
+    setMilestones(milestoneData);
+    setTransactions(txData);
+    setPageLoading(false);
+  };
+
   useEffect(() => {
-    fetchProject(id).then(setProject).catch(console.error);
-    listMilestones(id).then(setMilestones).catch(console.error);
-    listProjectTransactions(id).then(setTransactions).catch(console.error);
+    loadProjectData().catch((err) => {
+      console.error(err);
+      const msg = err?.response?.data?.message || "Failed to load project details.";
+      setError(msg);
+      setPageLoading(false);
+    });
     listFreelancers().then(setFreelancers).catch(console.error);
   }, [id]);
+
+  useEffect(() => {
+    if (!project?.freelancerId) return;
+    setAssignSel(project.freelancerId?._id || project.freelancerId);
+  }, [project?.freelancerId]);
 
   const etherscanTx = (hash) =>
     hash ? `${import.meta.env.VITE_ETHERSCAN_BASE || "https://sepolia.etherscan.io"}/tx/${hash}` : null;
@@ -38,7 +74,17 @@ const ProjectDetails = () => {
     }));
   }, [transactions, milestones]);
 
+  const projectFreelancerId = project?.freelancerId?._id || project?.freelancerId;
+  const projectFreelancerName = project?.freelancerId?.name || project?.freelancerId?.email;
+  const isDeployed = project?.contractProjectId !== undefined && project?.contractProjectId !== null;
+  const hasOnChainFreelancer = Boolean(project?.assignTxHash);
+
   const onAssign = async () => {
+    if (!isDeployed) {
+      setError("Deploy project on-chain before assigning freelancer.");
+      return;
+    }
+
     if (!assignSel) {
       setError("Select a freelancer");
       return;
@@ -53,11 +99,46 @@ const ProjectDetails = () => {
     try {
       const updated = await assignFreelancerApi(id, { freelancerWallet: picked.walletAddress, freelancerId: picked._id });
       setProject(updated);
+      addToast("Freelancer assigned on-chain", "success");
+      await loadProjectData();
     } catch (err) {
       console.error(err);
-      setError("Assignment failed. Try again.");
+      const msg = err?.response?.data?.message || "Assignment failed. Try again.";
+      setError(msg);
+      addToast(msg, "error");
     } finally {
       setAssignLoading(false);
+    }
+  };
+
+  const onFund = async () => {
+    if (!isDeployed) {
+      setError("Deploy project on-chain before funding.");
+      return;
+    }
+
+    const amount = Number(fundAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Enter a valid funding amount in ETH.");
+      return;
+    }
+
+    setFundLoading(true);
+    setError("");
+    try {
+      const amountWei = ethers.parseEther(String(amount)).toString();
+      const res = await fundProject(id, { amountWei });
+      setProject(res.project || res);
+      setFundAmount("");
+      addToast("Project funded on-chain", "success");
+      await loadProjectData();
+    } catch (err) {
+      console.error(err);
+      const msg = err?.response?.data?.message || err.message || "Funding failed";
+      setError(msg);
+      addToast(msg, "error");
+    } finally {
+      setFundLoading(false);
     }
   };
 
@@ -85,6 +166,7 @@ const ProjectDetails = () => {
       const updated = await deployProject(id);
       setProject(updated);
       addToast("Project deployed on-chain", "success");
+      await loadProjectData();
     } catch (err) {
       console.error(err);
       const msg = err?.response?.data?.message || err.message || "Deployment failed";
@@ -95,7 +177,15 @@ const ProjectDetails = () => {
     }
   };
 
-  if (!project) return <p>Loading...</p>;
+  if (pageLoading) return <p>Loading...</p>;
+
+  if (!project) {
+    return (
+      <div className="rounded border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+        {error || "Project could not be loaded."}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -110,7 +200,7 @@ const ProjectDetails = () => {
               {project.contractProjectId ? `On-chain #${project.contractProjectId}` : "Not deployed"}
             </span>
             <span className="text-sm px-2 py-1 bg-slate-800 rounded">{project.status}</span>
-            {(user?.role === "client" || user?.role === "admin") && ["Created", "Cancelled"].includes(project.status) && (
+            {isClientSide && ["Created", "Cancelled"].includes(project.status) && (
               <button
                 onClick={onDelete}
                 disabled={deleteLoading}
@@ -122,7 +212,8 @@ const ProjectDetails = () => {
           </div>
         </div>
         <div className="text-sm text-slate-400 mt-2">Budget: {project.budget} ETH</div>
-        {!project.contractProjectId && (user?.role === "client" || user?.role === "admin") && (
+        <div className="text-sm text-slate-400">Escrow funded: {Number(project.remainingBalance || 0).toFixed(4)} ETH</div>
+        {!project.contractProjectId && isClientSide && (
           <div className="mt-3 flex flex-wrap items-center gap-3 rounded border border-amber-700/50 bg-amber-950/30 px-4 py-3">
             <div className="text-sm text-amber-100">
               This project exists in the database but has not been deployed on-chain yet.
@@ -137,12 +228,43 @@ const ProjectDetails = () => {
             </button>
           </div>
         )}
-        {project.freelancerId ? (
-          <div className="text-sm text-slate-300 mt-1">Freelancer assigned</div>
-        ) : (
-          user?.role && ["client", "admin"].includes(user.role) && (
+
+        {isDeployed && isClientSide && (
+          <div className="mt-3 space-y-2 rounded border border-slate-800 bg-slate-950/50 px-4 py-3">
+            <p className="text-sm text-slate-300">Fund project escrow</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                className="w-48 bg-slate-800 px-3 py-2 rounded text-sm border border-slate-700"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="Amount in ETH"
+                value={fundAmount}
+                onChange={(e) => setFundAmount(e.target.value)}
+              />
+              <button
+                className="bg-primary px-3 py-2 rounded text-sm font-semibold text-slate-950 disabled:opacity-60"
+                type="button"
+                onClick={onFund}
+                disabled={fundLoading}
+              >
+                {fundLoading ? "Funding..." : "Fund on-chain"}
+              </button>
+            </div>
+            <p className="text-xs text-slate-400">Fund before freelancer submits milestones, otherwise contract will reject submission.</p>
+          </div>
+        )}
+
+        {projectFreelancerId && (
+          <div className="text-sm text-slate-300 mt-3">
+            Freelancer selected: {projectFreelancerName || projectFreelancerId}
+            {hasOnChainFreelancer ? " (assigned on-chain)" : " (not yet assigned on-chain)"}
+          </div>
+        )}
+
+        {isClientSide && (
             <div className="mt-3 space-y-2">
-              <p className="text-sm text-slate-300">Assign freelancer</p>
+              <p className="text-sm text-slate-300">Assign freelancer on-chain</p>
               <select
                 className="w-full bg-slate-800 px-3 py-2 rounded text-sm"
                 value={assignSel}
@@ -159,13 +281,12 @@ const ProjectDetails = () => {
                 className="bg-primary px-3 py-2 rounded text-sm disabled:opacity-60"
                 type="button"
                 onClick={onAssign}
-                disabled={assignLoading}
+                disabled={assignLoading || !isDeployed}
               >
-                {assignLoading ? "Assigning..." : "Assign"}
+                {assignLoading ? "Assigning..." : hasOnChainFreelancer ? "Re-assign" : "Assign"}
               </button>
               {error && <p className="text-xs text-amber-300">{error}</p>}
             </div>
-          )
         )}
       </div>
 
@@ -173,7 +294,7 @@ const ProjectDetails = () => {
         <h4 className="font-semibold mb-2">Milestones</h4>
         <div className="grid md:grid-cols-2 gap-3">
           {milestones.map((m) => (
-            <MilestoneCard key={m._id} milestone={m} />
+            <MilestoneCard key={m._id} milestone={m} onUpdated={loadProjectData} />
           ))}
           {!milestones.length && <p className="text-slate-400">No milestones yet.</p>}
         </div>

@@ -196,6 +196,8 @@ contract FreelanceEscrow is Ownable, ReentrancyGuard {
         require(ok, "Transfer failed");
         if (p.remainingBalance == 0) {
             p.status = ProjectStatus.Completed;
+        } else {
+            p.status = ProjectStatus.InProgress;
         }
         emit PaymentReleased(projectId, milestoneId, m.amount);
     }
@@ -211,7 +213,7 @@ contract FreelanceEscrow is Ownable, ReentrancyGuard {
         emit DisputeRaised(projectId, reason);
     }
 
-    function resolveDispute(uint256 projectId, bool refundClient)
+    function resolveDispute(uint256 projectId, bool shouldRefundClient)
         external
         projectExists(projectId)
         onlyOwner
@@ -219,14 +221,14 @@ contract FreelanceEscrow is Ownable, ReentrancyGuard {
     {
         Project storage p = projects[projectId];
         require(p.status == ProjectStatus.Disputed, "No dispute");
-        if (refundClient && p.remainingBalance > 0) {
+        if (shouldRefundClient && p.remainingBalance > 0) {
             uint256 amount = p.remainingBalance;
             p.remainingBalance = 0;
             (bool ok, ) = p.client.call{value: amount}("");
             require(ok, "Refund failed");
             emit RefundIssued(projectId, amount);
         }
-        p.status = refundClient ? ProjectStatus.Cancelled : ProjectStatus.Completed;
+        p.status = shouldRefundClient ? ProjectStatus.Cancelled : ProjectStatus.Completed;
     }
 
     function cancelProject(uint256 projectId)

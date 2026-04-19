@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { approveMilestone } from "../services/api.js";
+import { approveMilestone, releaseMilestonePayment } from "../services/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useToast } from "../context/ToastContext.jsx";
 
@@ -14,14 +14,24 @@ const statusColors = {
 const etherscanTx = (hash) =>
   hash ? `${import.meta.env.VITE_ETHERSCAN_BASE || "https://sepolia.etherscan.io"}/tx/${hash}` : null;
 
-const MilestoneCard = ({ milestone }) => {
+const MilestoneCard = ({ milestone, onUpdated }) => {
   const { user } = useAuth();
   const { addToast } = useToast();
   const [item, setItem] = useState(milestone);
   const [loading, setLoading] = useState(false);
+  const [releaseLoading, setReleaseLoading] = useState(false);
   const [error, setError] = useState("");
 
   const canApprove = user?.role && ["client", "admin"].includes(user.role) && item.status === "Submitted";
+  const canRelease = user?.role && ["client", "admin"].includes(user.role) && item.status === "Approved";
+
+  const applyUpdate = (updated) => {
+    const merged = { ...item, ...updated };
+    setItem(merged);
+    if (typeof onUpdated === "function") {
+      onUpdated(merged);
+    }
+  };
 
   const handleApprove = async () => {
     setLoading(true);
@@ -32,8 +42,8 @@ const MilestoneCard = ({ milestone }) => {
         milestoneId: item._id,
       });
       const updated = res.milestone || res;
-      setItem({ ...item, ...updated });
-      addToast("Milestone approved and paid", "success");
+      applyUpdate(updated);
+      addToast("Milestone approved", "success");
     } catch (err) {
       console.error(err);
       const msg = err?.response?.data?.message || "Approval failed. Check status or try again.";
@@ -41,6 +51,27 @@ const MilestoneCard = ({ milestone }) => {
       addToast(msg, "error");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRelease = async () => {
+    setReleaseLoading(true);
+    setError("");
+    try {
+      const res = await releaseMilestonePayment({
+        projectId: item.projectId?._id || item.projectId,
+        milestoneId: item._id,
+      });
+      const updated = res.milestone || res;
+      applyUpdate(updated);
+      addToast("Payment released", "success");
+    } catch (err) {
+      console.error(err);
+      const msg = err?.response?.data?.message || "Payment release failed. Try again.";
+      setError(msg);
+      addToast(msg, "error");
+    } finally {
+      setReleaseLoading(false);
     }
   };
 
@@ -93,11 +124,23 @@ const MilestoneCard = ({ milestone }) => {
             onClick={handleApprove}
             disabled={loading}
           >
-            {loading ? "Approving..." : "Approve & release"}
+            {loading ? "Approving..." : "Approve milestone"}
           </button>
-          {error && <p className="text-xs text-amber-300">{error}</p>}
         </div>
       )}
+      {canRelease && (
+        <div className="mt-3 space-y-2">
+          <button
+            className="bg-emerald-500/90 px-3 py-2 rounded text-sm text-slate-950 font-semibold disabled:opacity-60"
+            type="button"
+            onClick={handleRelease}
+            disabled={releaseLoading}
+          >
+            {releaseLoading ? "Releasing..." : "Release payment"}
+          </button>
+        </div>
+      )}
+      {error && <p className="text-xs text-amber-300 mt-2">{error}</p>}
     </div>
   );
 };

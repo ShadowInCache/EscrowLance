@@ -7,9 +7,45 @@ import {
   releasePaymentOnChain,
 } from "../services/blockchainService.js";
 
+const isProjectParticipant = (project, user) => {
+  if (!project || !user) return false;
+  if (user.role === "admin") return true;
+  return [project.clientId, project.freelancerId].some(
+    (memberId) => memberId && String(memberId) === String(user._id)
+  );
+};
+
+const isProjectClientOwner = (project, user) => {
+  if (!project || !user) return false;
+  if (user.role === "admin") return true;
+  return String(project.clientId) === String(user._id);
+};
+
 export const createMilestone = async (req, res) => {
   const { projectId, title, description, amount, deadline } = req.body;
-  const milestone = await Milestone.create({ projectId, title, description, amount, deadline });
+
+  if (!projectId || !title || !amount) {
+    return res.status(400).json({ message: "projectId, title, and amount are required" });
+  }
+
+  const project = await Project.findById(projectId).select("clientId milestones");
+  if (!project) {
+    return res.status(404).json({ message: "Project not found" });
+  }
+
+  if (!isProjectClientOwner(project, req.user)) {
+    return res.status(403).json({ message: "Only the project owner or admin can create milestones" });
+  }
+
+  const contractMilestoneId = project.milestones?.length || 0;
+  const milestone = await Milestone.create({
+    projectId,
+    title,
+    description,
+    amount,
+    deadline,
+    contractMilestoneId,
+  });
   await Project.findByIdAndUpdate(projectId, { $push: { milestones: milestone._id } });
   res.status(201).json(milestone);
 };
@@ -17,30 +53,59 @@ export const createMilestone = async (req, res) => {
 export const submitMilestone = async (req, res) => {
   try {
     const { projectId, milestoneId, workHash, ipfsHash, amount, title, deadline, submitTxHash } = req.body;
+    if (!projectId || !milestoneId || !submitTxHash) {
+      return res.status(400).json({ message: "projectId, milestoneId, and submitTxHash are required" });
+    }
+
     const milestone = await Milestone.findById(milestoneId);
     if (!milestone) return res.status(404).json({ message: "Milestone not found" });
     if (milestone.status !== "Pending") return res.status(400).json({ message: "Milestone already submitted" });
 
     const project = await Project.findById(projectId);
     if (!project) return res.status(404).json({ message: "Project not found" });
-    if (!project.contractProjectId || project.contractProjectId === undefined || project.contractProjectId === null) {
+
+    if (String(milestone.projectId) !== String(project._id)) {
+      return res.status(400).json({ message: "Milestone does not belong to this project" });
+    }
+
+    if (!isProjectParticipant(project, req.user)) {
+      return res.status(403).json({ message: "You are not allowed to submit for this project" });
+    }
+
+    if (String(project.freelancerId) !== String(req.user._id) && req.user.role !== "admin") {
+      return res.status(403).json({ message: "Only the assigned freelancer can submit this milestone" });
+    }
+
+    if (project.contractProjectId === undefined || project.contractProjectId === null) {
       return res.status(400).json({ message: `Project not deployed on-chain yet. Missing contractProjectId. Project ID: ${project._id}` });
     }
     if (milestone.contractMilestoneId === undefined || milestone.contractMilestoneId === null) {
       return res.status(400).json({ message: `Milestone not properly linked to contract. Missing contractMilestoneId. Milestone ID: ${milestone._id}` });
     }
-    if (!submitTxHash) {
+
+    const normalizedSubmitTxHash = submitTxHash.trim();
+    if (!normalizedSubmitTxHash) {
       return res.status(400).json({ message: "submitTxHash is required" });
     }
 
+    const effectiveWorkHash = (workHash || ipfsHash || "").trim();
+    if (!effectiveWorkHash) {
+      return res.status(400).json({ message: "Provide workHash or ipfsHash" });
+    }
+
     const contract = getContract();
-    const receipt = await contract.runner.provider.getTransactionReceipt(submitTxHash);
+    const receipt = await contract.runner.provider.getTransactionReceipt(normalizedSubmitTxHash);
     if (!receipt) {
       return res.status(400).json({ message: "Submission transaction not found on-chain yet" });
     }
     if (receipt.status !== 1) {
       return res.status(400).json({ message: "Submission transaction failed on-chain" });
     }
+
+    if (receipt.to && contract.target && String(receipt.to).toLowerCase() !== String(contract.target).toLowerCase()) {
+      return res.status(400).json({ message: "Submission transaction was sent to a different contract" });
+    }
+
     if (req.user.walletAddress && receipt.from && receipt.from.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
       return res.status(403).json({ message: "Submission transaction was not signed by the freelancer wallet" });
     }
@@ -65,7 +130,7 @@ export const submitMilestone = async (req, res) => {
     if (Number(milestoneEvent.args.milestoneId) !== Number(milestone.contractMilestoneId)) {
       return res.status(400).json({ message: "Submission transaction milestoneId does not match" });
     }
-    if ((milestoneEvent.args.workHash || "") !== (workHash || "")) {
+    if ((milestoneEvent.args.workHash || "") !== effectiveWorkHash) {
       return res.status(400).json({ message: "Submission transaction workHash does not match" });
     }
 
@@ -73,14 +138,17 @@ export const submitMilestone = async (req, res) => {
     if (amount) milestone.amount = amount;
     if (title) milestone.title = title;
     if (deadline) milestone.deadline = deadline;
-    milestone.workHash = workHash;
-    milestone.ipfsHash = ipfsHash;
+    milestone.workHash = effectiveWorkHash;
+    milestone.ipfsHash = (ipfsHash || "").trim() || milestone.ipfsHash;
     milestone.submitTxHash = receipt.hash;
     await milestone.save();
 
+    project.status = "Submitted";
+    await project.save();
+
     await Transaction.create({
-      projectId,
-      milestoneId,
+      projectId: project._id,
+      milestoneId: milestone._id,
       amount: Number(milestone.amount),
       txHash: receipt.hash,
       status: "Completed",
@@ -96,92 +164,142 @@ export const submitMilestone = async (req, res) => {
 };
 
 export const approveMilestone = async (req, res) => {
-  const { projectId, milestoneId } = req.body;
-  const milestone = await Milestone.findById(milestoneId);
-  if (!milestone) return res.status(404).json({ message: "Milestone not found" });
-  if (milestone.status === "Paid") return res.status(400).json({ message: "Milestone already paid" });
-  if (milestone.status !== "Submitted") return res.status(400).json({ message: "Milestone must be submitted before approval" });
-  const project = await Project.findById(projectId);
+  try {
+    const { projectId, milestoneId } = req.body;
+    if (!projectId || !milestoneId) {
+      return res.status(400).json({ message: "projectId and milestoneId are required" });
+    }
 
-  const tx = await approveMilestoneOnChain({
-    projectId: project.contractProjectId,
-    milestoneId: milestone.contractMilestoneId,
-  });
-  const receipt = await tx.wait();
+    const milestone = await Milestone.findById(milestoneId);
+    if (!milestone) return res.status(404).json({ message: "Milestone not found" });
+    if (milestone.status === "Paid") return res.status(400).json({ message: "Milestone already paid" });
+    if (milestone.status !== "Submitted") return res.status(400).json({ message: "Milestone must be submitted before approval" });
 
-  milestone.status = "Approved";
-  milestone.approveTxHash = receipt.hash;
-  await milestone.save();
+    const project = await Project.findById(projectId);
+    if (!project) return res.status(404).json({ message: "Project not found" });
+    if (String(milestone.projectId) !== String(project._id)) {
+      return res.status(400).json({ message: "Milestone does not belong to this project" });
+    }
 
-  await Transaction.create({
-    projectId,
-    milestoneId,
-    amount: Number(milestone.amount),
-    txHash: receipt.hash,
-    status: "Completed",
-    action: "approveMilestone",
-    userId: req.user._id,
-  });
+    if (!isProjectClientOwner(project, req.user)) {
+      return res.status(403).json({ message: "Only the project owner or admin can approve milestones" });
+    }
 
-  // Auto-release payment after approval
-  const payTx = await releasePaymentOnChain({
-    projectId: project.contractProjectId,
-    milestoneId: milestone.contractMilestoneId,
-  });
-  const payReceipt = await payTx.wait();
+    if (project.contractProjectId === undefined || project.contractProjectId === null) {
+      return res.status(400).json({ message: "Project must be deployed on-chain before approval" });
+    }
 
-  milestone.status = "Paid";
-  milestone.payTxHash = payReceipt.hash;
-  await milestone.save();
-  project.remainingBalance = Math.max(project.remainingBalance - Number(milestone.amount), 0);
-  await project.save();
+    if (milestone.contractMilestoneId === undefined || milestone.contractMilestoneId === null) {
+      return res.status(400).json({ message: "Milestone must have a valid on-chain milestone index" });
+    }
 
-  await Transaction.create({
-    projectId,
-    milestoneId,
-    amount: Number(milestone.amount),
-    txHash: payReceipt.hash,
-    status: "Completed",
-    action: "releasePayment",
-    userId: req.user._id,
-  });
+    const tx = await approveMilestoneOnChain({
+      projectId: project.contractProjectId,
+      milestoneId: milestone.contractMilestoneId,
+    });
+    const receipt = await tx.wait();
 
-  res.json({ milestone, approveTx: receipt.hash, payTx: payReceipt.hash });
+    milestone.status = "Approved";
+    milestone.approveTxHash = receipt.hash;
+    await milestone.save();
+
+    await Transaction.create({
+      projectId: project._id,
+      milestoneId: milestone._id,
+      amount: Number(milestone.amount),
+      txHash: receipt.hash,
+      status: "Completed",
+      action: "approveMilestone",
+      userId: req.user._id,
+    });
+
+    res.json({ milestone, approveTx: receipt.hash });
+  } catch (err) {
+    console.error("approveMilestone error:", err.message);
+    res.status(500).json({ message: `Approval failed: ${err.message}` });
+  }
 };
 
 export const releasePayment = async (req, res) => {
-  const { projectId, milestoneId, amount } = req.body;
-  const milestone = await Milestone.findById(milestoneId);
-  const project = await Project.findById(projectId);
-  if (!milestone || !project) return res.status(404).json({ message: "Not found" });
-  const numericAmount = Number(amount || milestone.amount);
+  try {
+    const { projectId, milestoneId, amount } = req.body;
+    if (!projectId || !milestoneId) {
+      return res.status(400).json({ message: "projectId and milestoneId are required" });
+    }
 
-  const tx = await releasePaymentOnChain({
-    projectId: project.contractProjectId,
-    milestoneId: milestone.contractMilestoneId,
-  });
-  const receipt = await tx.wait();
+    const milestone = await Milestone.findById(milestoneId);
+    const project = await Project.findById(projectId);
+    if (!milestone || !project) return res.status(404).json({ message: "Not found" });
 
-  milestone.status = "Paid";
-  milestone.payTxHash = receipt.hash;
-  await milestone.save();
-  project.remainingBalance = Math.max(project.remainingBalance - numericAmount, 0);
-  await project.save();
+    if (String(milestone.projectId) !== String(project._id)) {
+      return res.status(400).json({ message: "Milestone does not belong to this project" });
+    }
 
-  const txDoc = await Transaction.create({
-    projectId,
-    milestoneId,
-    amount: numericAmount,
-    txHash: receipt.hash,
-    status: "Completed",
-    action: "releasePayment",
-    userId: req.user._id,
-  });
+    if (!isProjectClientOwner(project, req.user)) {
+      return res.status(403).json({ message: "Only the project owner or admin can release milestone payments" });
+    }
 
-  res.json({ milestone, transaction: txDoc });
+    if (milestone.status === "Paid") {
+      return res.status(400).json({ message: "Milestone already paid" });
+    }
+
+    if (milestone.status !== "Approved") {
+      return res.status(400).json({ message: "Milestone must be approved before payment release" });
+    }
+
+    if (project.contractProjectId === undefined || project.contractProjectId === null) {
+      return res.status(400).json({ message: "Project must be deployed on-chain before payment release" });
+    }
+
+    if (milestone.contractMilestoneId === undefined || milestone.contractMilestoneId === null) {
+      return res.status(400).json({ message: "Milestone must have a valid on-chain milestone index" });
+    }
+
+    const numericAmount = Number(amount || milestone.amount);
+
+    const tx = await releasePaymentOnChain({
+      projectId: project.contractProjectId,
+      milestoneId: milestone.contractMilestoneId,
+    });
+    const receipt = await tx.wait();
+
+    milestone.status = "Paid";
+    milestone.payTxHash = receipt.hash;
+    await milestone.save();
+
+    project.remainingBalance = Math.max(Number(project.remainingBalance || 0) - numericAmount, 0);
+    if (project.remainingBalance === 0) {
+      project.status = "Completed";
+    }
+    await project.save();
+
+    const txDoc = await Transaction.create({
+      projectId: project._id,
+      milestoneId: milestone._id,
+      amount: numericAmount,
+      txHash: receipt.hash,
+      status: "Completed",
+      action: "releasePayment",
+      userId: req.user._id,
+    });
+
+    res.json({ milestone, transaction: txDoc, payTx: receipt.hash });
+  } catch (err) {
+    console.error("releasePayment error:", err.message);
+    res.status(500).json({ message: `Payment release failed: ${err.message}` });
+  }
 };
 
 export const listByProject = async (req, res) => {
-  const milestones = await Milestone.find({ projectId: req.params.projectId });
+  const project = await Project.findById(req.params.projectId);
+  if (!project) {
+    return res.status(404).json({ message: "Project not found" });
+  }
+
+  if (!isProjectParticipant(project, req.user)) {
+    return res.status(403).json({ message: "You are not allowed to view milestones for this project" });
+  }
+
+  const milestones = await Milestone.find({ projectId: req.params.projectId }).sort({ contractMilestoneId: 1, createdAt: 1 });
   res.json(milestones);
 };
