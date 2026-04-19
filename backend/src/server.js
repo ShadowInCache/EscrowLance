@@ -1,22 +1,33 @@
 import "dotenv/config";
 import app from "./app.js";
 import { connectDB } from "./config/db.js";
+import { getMissingEnvKeys, normalizeRuntimeEnv } from "./config/env.js";
 
 const PORT = process.env.PORT || 5000;
-const requiredEnv = ["MONGO_URI", "JWT_SECRET", "CHAINESCROW_CONTRACT_ADDRESS", "SEPOLIA_RPC_URL"];
+const requiredStartupEnv = ["MONGO_URI", "JWT_SECRET"];
+const blockchainEnv = ["SEPOLIA_RPC_URL", "PRIVATE_KEY", "CHAINESCROW_CONTRACT_ADDRESS"];
 
 const start = async () => {
   try {
-    const missing = requiredEnv.filter((key) => !process.env[key]);
+    const normalizedEnv = normalizeRuntimeEnv();
+
+    const missing = getMissingEnvKeys(requiredStartupEnv);
     if (missing.length) {
       throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
     }
 
-    if ((process.env.JWT_SECRET || "").length < 32) {
+    if ((normalizedEnv.JWT_SECRET || "").length < 32) {
       throw new Error("JWT_SECRET must be at least 32 characters long in production.");
     }
 
-    await connectDB(process.env.MONGO_URI);
+    const missingBlockchainEnv = getMissingEnvKeys(blockchainEnv);
+    if (missingBlockchainEnv.length) {
+      console.warn(
+        `Blockchain features may fail until environment variables are set: ${missingBlockchainEnv.join(", ")}`
+      );
+    }
+
+    await connectDB(normalizedEnv.MONGO_URI);
     const server = app.listen(PORT, () => {
       console.log(`API running on port ${PORT}`);
     });
