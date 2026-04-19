@@ -12,7 +12,6 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
 import { useWallet } from "../../hooks/useWallet.js";
 import { getFreelanceEscrowContract, getOnChainProject } from "../../blockchain/freelanceEscrow.js";
-import { SUPPORTED_CHAIN_HEX, SUPPORTED_CHAIN_ID, SUPPORTED_CHAIN_NAME } from "../../config/env.js";
 
 const SubmitMilestone = () => {
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -32,11 +31,12 @@ const SubmitMilestone = () => {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [txStatus, setTxStatus] = useState("");
   const [file, setFile] = useState(null);
   const { user } = useAuth();
   const { addToast } = useToast();
   const { provider, address, connect, switchToChain, isConnected } = useWallet();
+  const sepoliaChainId = 11155111;
+  const sepoliaChainIdHex = "0xaa36a7";
 
   const getFreshProvider = () => {
     if (!window.ethereum) return null;
@@ -128,7 +128,6 @@ const SubmitMilestone = () => {
   const onSubmit = async (e) => {
     e.preventDefault();
     setError(null);
-    setTxStatus("");
     if (!form.projectId || !form.milestoneId) {
       setError("Select a project and milestone first");
       return;
@@ -191,13 +190,13 @@ const SubmitMilestone = () => {
       currentNetwork = await activeProvider.getNetwork();
     }
 
-    if (Number(currentNetwork.chainId) !== SUPPORTED_CHAIN_ID) {
+    if (Number(currentNetwork.chainId) !== sepoliaChainId) {
       try {
-        await switchToChain(SUPPORTED_CHAIN_HEX);
+        await switchToChain(sepoliaChainIdHex);
 
-        const switched = await waitForExpectedChain(SUPPORTED_CHAIN_ID);
+        const switched = await waitForExpectedChain(sepoliaChainId);
         if (!switched) {
-          throw new Error(`Network switch timed out. Please confirm MetaMask is on ${SUPPORTED_CHAIN_NAME}.`);
+          throw new Error("Network switch timed out. Please confirm MetaMask is on Sepolia.");
         }
 
         activeProvider = getFreshProvider() || activeProvider;
@@ -208,8 +207,8 @@ const SubmitMilestone = () => {
       }
     }
 
-    if (Number(currentNetwork.chainId) !== SUPPORTED_CHAIN_ID) {
-      setError(`MetaMask must be connected to ${SUPPORTED_CHAIN_NAME}.`);
+    if (Number(currentNetwork.chainId) !== sepoliaChainId) {
+      setError("MetaMask must be connected to Sepolia.");
       return;
     }
 
@@ -223,7 +222,6 @@ const SubmitMilestone = () => {
 
     setLoading(true);
     try {
-      setTxStatus("Preparing transaction...");
       let onChainProject = await getOnChainProject(activeProvider, selectedProject.contractProjectId);
       let onChainFreelancer = onChainProject?.freelancer?.toLowerCase?.();
 
@@ -274,7 +272,6 @@ const SubmitMilestone = () => {
       const contract = await getFreelanceEscrowContract(activeProvider);
       const milestoneAmountWei = ethers.parseEther(String(target?.amount || 0));
       const deadline = target?.deadline ? Math.floor(new Date(target.deadline).getTime() / 1000) : 0;
-      setTxStatus("Awaiting MetaMask confirmation...");
       const tx = await contract.submitMilestone(
         selectedProject.contractProjectId,
         target.contractMilestoneId,
@@ -283,9 +280,7 @@ const SubmitMilestone = () => {
         target.title || "",
         deadline
       );
-      setTxStatus(`Transaction sent: ${tx.hash}. Waiting for confirmation...`);
       const receipt = await tx.wait();
-      setTxStatus("Transaction confirmed. Syncing backend state...");
       const data = await submitMilestone({
         ...form,
         milestoneId: form.milestoneId,
@@ -293,13 +288,11 @@ const SubmitMilestone = () => {
         submitTxHash: receipt.hash,
       });
       setMessage(`Submitted milestone ${data._id || form.milestoneId}`);
-      setTxStatus("Milestone submission completed successfully.");
       addToast("Milestone submitted", "success");
     } catch (err) {
       console.error("Submit error:", err);
-      const msg = err?.userMessage || err?.response?.data?.message || err?.message || "Submission failed. Check status or try again.";
+      const msg = err?.response?.data?.message || err?.message || "Submission failed. Check status or try again.";
       setError(msg);
-      setTxStatus("");
       addToast(msg, "error");
     } finally {
       setLoading(false);
@@ -388,11 +381,6 @@ const SubmitMilestone = () => {
       {message && (
         <div className="rounded-lg border border-emerald-600 bg-emerald-900/30 px-4 py-3 text-sm text-emerald-50">
           {message}
-        </div>
-      )}
-      {txStatus && (
-        <div className="rounded-lg border border-sky-500/50 bg-sky-900/20 px-4 py-3 text-sm text-sky-100">
-          {txStatus}
         </div>
       )}
 

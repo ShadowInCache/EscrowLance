@@ -1,32 +1,12 @@
 import axios from "axios";
-import { API_BASE_URL, API_TIMEOUT_MS } from "../config/env.js";
 
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: API_TIMEOUT_MS,
-  withCredentials: true,
-});
+const api = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api" });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("ce_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
-  config.headers["X-Client-Version"] = import.meta.env.VITE_APP_VERSION || "dev";
   return config;
 });
-
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error?.code === "ECONNABORTED") {
-      error.userMessage = "Request timed out. Please try again.";
-    } else if (!error?.response) {
-      error.userMessage = "Network unavailable. Check your internet connection.";
-    } else {
-      error.userMessage = error.response.data?.message || "Request failed";
-    }
-    return Promise.reject(error);
-  }
-);
 
 export const login = async (email, password) => {
   const { data } = await api.post("/auth/login", { email, password });

@@ -8,16 +8,16 @@ const router = express.Router();
 router.post(
   "/register",
   [
-    body("name").trim().notEmpty(),
-    body("email").isEmail().normalizeEmail(),
+    body("name").notEmpty(),
+    body("email").isEmail(),
     body("password").isLength({ min: 8 }),
     body("role").isIn(["client", "freelancer", "admin"]),
-    body("walletAddress").matches(/^0x[a-fA-F0-9]{40}$/),
+    body("walletAddress").notEmpty(),
   ],
   register
 );
 
-router.post("/login", [body("email").isEmail().normalizeEmail(), body("password").notEmpty()], login);
+router.post("/login", login);
 router.get("/profile", protect, profile);
 
 export default router;

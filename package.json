@@ -7,8 +7,6 @@
     "dev:backend": "npm run dev --prefix backend",
     "dev:frontend": "npm run dev --prefix frontend",
     "dev:blockchain": "npm run node --prefix blockchain",
-    "build:frontend": "npm run build:prod --prefix frontend",
-    "test": "npm test --prefix backend && npm run test --prefix blockchain",
-    "deploy:contract:sepolia": "npm run deploy:sepolia:verify --prefix blockchain"
+    "test": "npm test --prefix backend && npm run test --prefix blockchain"
   }
 }

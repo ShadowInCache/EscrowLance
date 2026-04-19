@@ -58,10 +58,7 @@ describe("services and utils", () => {
 
     await connectDB("mongodb://localhost/test");
 
-    expect(mongoose.connect).toHaveBeenCalledWith(
-      "mongodb://localhost/test",
-      expect.objectContaining({ dbName: "chainescrow" })
-    );
+    expect(mongoose.connect).toHaveBeenCalledWith("mongodb://localhost/test", { dbName: "chainescrow" });
   });
 
   it("blockchain service wrappers call contract", async () => {

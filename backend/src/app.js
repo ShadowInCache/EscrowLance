@@ -1,12 +1,7 @@
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
-import helmet from "helmet";
-import compression from "compression";
-import rateLimit from "express-rate-limit";
-import mongoSanitize from "express-mongo-sanitize";
-import hpp from "hpp";
-import xss from "xss";
+import dotenv from "dotenv";
 import authRoutes from "./routes/authRoutes.js";
 import projectRoutes from "./routes/projectRoutes.js";
 import milestoneRoutes from "./routes/milestoneRoutes.js";
@@ -17,16 +12,9 @@ import userRoutes from "./routes/userRoutes.js";
 import { getContract } from "./blockchain/contractClient.js";
 import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 
-const app = express();
+dotenv.config();
 
-const sanitizeStrings = (value) => {
-  if (typeof value === "string") return xss(value.trim());
-  if (Array.isArray(value)) return value.map(sanitizeStrings);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, val]) => [key, sanitizeStrings(val)]));
-  }
-  return value;
-};
+const app = express();
 
 const isProduction = process.env.NODE_ENV === "production";
 const configuredOrigins = (process.env.CLIENT_URL || "")
@@ -64,30 +52,10 @@ const corsOptions = {
   },
 };
 
-const apiLimiter = rateLimit({
-  windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
-  max: Number(process.env.RATE_LIMIT_MAX || 300),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { message: "Too many requests. Please try again later." },
-});
-
-app.set("trust proxy", 1);
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
-app.use(compression());
 app.use(cors(corsOptions));
-app.use(express.json({ limit: process.env.BODY_LIMIT || "2mb" }));
-app.use(express.urlencoded({ extended: true, limit: process.env.BODY_LIMIT || "2mb" }));
-app.use(mongoSanitize());
-app.use(hpp());
-app.use((req, _res, next) => {
-  req.body = sanitizeStrings(req.body || {});
-  req.query = sanitizeStrings(req.query || {});
-  req.params = sanitizeStrings(req.params || {});
-  next();
-});
-app.use(morgan(isProduction ? "combined" : "dev"));
-app.use("/api", apiLimiter);
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(morgan("dev"));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: Date.now() });
